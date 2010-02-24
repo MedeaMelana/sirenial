@@ -38,4 +38,4 @@ selectAdById adId = do
     }
 
 selectAdsByIds :: [Int] -> Merge [(Ref Db.Ad, Day)]
-selectAdsByIds adIds = concat <$> sequenceA (map (select . selectAdById) adIds)
+selectAdsByIds = concatSelect . map selectAdById
