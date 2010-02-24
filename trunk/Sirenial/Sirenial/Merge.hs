@@ -3,10 +3,11 @@
 {-# LANGUAGE Rank2Types #-}
 
 -- | Transparently merge SELECT queries.
-module Sirenial.Merge (Merge, select, execMerge) where
+module Sirenial.Merge (Merge, select, concatSelect, execMerge) where
 
 import Sirenial.Query
 
+import Data.Traversable
 import Control.Applicative
 
 -- | SELECT statements can be lifted into the @Merge@ functor, allowing them
@@ -28,6 +29,10 @@ instance Applicative Merge where
 -- Bring a query into the 'Merge' functor.
 select :: Select (SelectStmt a) -> Merge [a]
 select = MeSelect
+
+-- | Merge a list of queries and flatten the resulting record lists.
+concatSelect :: [Select (SelectStmt a)] -> Merge [a]
+concatSelect ss = concat <$> sequenceA (map select ss)
 
 -- Execute a merged query. The 'Merge' functor tries its best to combine
 -- similar queries, hopefully resulting in less calls to 'ExecSelect' than the
