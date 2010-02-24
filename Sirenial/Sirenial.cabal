@@ -1,0 +1,23 @@
+Name:           Sirenial
+Version:        0.1
+Synopsis:       Type-safe SQL wrapper for Haskell
+Description:    Type-safe SQL wrapper for Haskell
+
+
+Author:         Martijn van Steenbergen
+Maintainer:     martijn@van.steenbergen.nl
+Stability:      Experimental
+Copyright:      Some Rights Reserved (CC) 2010 Martijn van Steenbergen
+Homepage:       http://code.google.com/p/sirenial/
+
+
+Cabal-Version:  >= 1.2
+License:        BSD3
+License-file:   LICENSE
+Category:       Network
+Build-type:     Simple
+
+
+Library
+  Exposed-Modules:  Sirenial.Query, Sirenial.Merge
+  Build-Depends:    base >= 4 && < 5, time >= 1.1.4 && < 1.2
