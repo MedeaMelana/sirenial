@@ -38,4 +38,11 @@ concatSelect ss = concat <$> sequenceA (map select ss)
 -- similar queries, hopefully resulting in less calls to 'ExecSelect' than the
 -- number of SELECT queries that were lifted.
 execMerge :: ExecSelect -> Merge b -> IO b
-execMerge = undefined
+execMerge execSelect = go
+  where
+    -- Todo: insert magical merge optimizations.
+    go :: Merge a -> IO a
+    go merge = case merge of
+      MePure x       -> return x
+      MeApply mf mx  -> go mf <*> go mx
+      MeSelect s     -> execSelect s
