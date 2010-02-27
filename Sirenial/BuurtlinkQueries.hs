@@ -33,7 +33,7 @@ selectAdById adId = do
   a   <- from Db.tableAd
   aw  <- leftJoin Db.adWeekAdId (a # Db.adId)
   return $ SelectStmt
-    { ssResult = (,) <$> (a # Db.adId) <*> aw # Db.adWeekStartsOn
+    { ssResult = (,) <$> (a # Db.adId) <*> (aw # Db.adWeekStartsOn)
     , ssWhere  = (a # Db.adId) `ExEq` ExRef adId
     }
 
