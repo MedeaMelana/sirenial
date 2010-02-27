@@ -12,8 +12,8 @@ module Sirenial.Query (
     (#),
 
     -- * Building SELECT queries
-    Select(..), JoinType(..), SelectStmt(..),
-    from, leftJoin, returnAll,
+    Select(..), SelectStmt(..),
+    from, returnAll,
 
     -- * Executing SELECT queries
     ExecSelect(..), Merge(..),
@@ -93,7 +93,6 @@ data Select a where
   SeReturn    :: a -> Select a
   SeBind      :: Select a -> (a -> Select b) -> Select b
   SeFrom      :: Table t -> Select (TableAlias t)
-  SeJoin      :: JoinType -> Field t a -> Expr a -> Select (TableAlias t)
 
 instance Functor Select where
   fmap    = liftM
@@ -101,9 +100,6 @@ instance Functor Select where
 instance Monad Select where
   return  = SeReturn
   (>>=)   = SeBind
-
-data JoinType = InnerJoin | LeftJoin | RightJoin
-  deriving (Eq, Read, Show, Enum)
 
 data SelectStmt a = SelectStmt
   { ssResult :: Expr a
@@ -113,10 +109,6 @@ data SelectStmt a = SelectStmt
 -- | Select from a table. (An alias for 'SeFrom'.)
 from :: Table t -> Select (TableAlias t)
 from = SeFrom
-
--- | Short for @'SeJoin' 'LeftJoin'@.
-leftJoin :: Field t a -> Expr a -> Select (TableAlias t)
-leftJoin = SeJoin LeftJoin
 
 -- | Return an expression with no WHERE clause.
 returnAll :: Expr a -> Select (SelectStmt a)
