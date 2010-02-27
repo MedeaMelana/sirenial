@@ -1,5 +1,5 @@
 default:
-	ghci BuurtlinkQueries
+	ghci -fwarn-unused-imports BuurtlinkQueries
 
 configure:
 	cabal configure

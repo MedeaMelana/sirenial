@@ -17,10 +17,10 @@ module Sirenial.Query (
 
     -- * Executing SELECT queries
     ExecSelect(..), Merge(..),
-    for,
+    execSelect, for,
   ) where
 
-import Data.Traversable (sequenceA)
+import qualified Data.Traversable as T
 import Data.Time.Calendar
 import Control.Applicative
 import Control.Monad
@@ -68,7 +68,7 @@ data Expr a where
   ExGet    :: TableAlias t -> Field t a -> Expr a
   ExEq     :: Expr a -> Expr a -> Expr Bool
   ExBool   :: Bool -> Expr Bool
-  ExRef    :: Int -> Expr (Ref a)
+  ExRef    :: Ref a -> Expr (Ref a)
   ExAlias  :: Int -> Expr (TableAlias t)
 
 instance Functor Expr where
@@ -90,10 +90,10 @@ data TableAlias t = TableAlias { getAlias :: Int }
 
 -- | The Select monad handles the supply of new table aliases arising from FROMs and JOINs.
 data Select a where
-  SeReturn  :: a -> Select a
-  SeBind    :: Select a -> (a -> Select b) -> Select b
-  SeFrom    :: Table t -> Select (TableAlias t)
-  SeJoin    :: JoinType -> Field t a -> Expr a -> Select (TableAlias t)
+  SeReturn    :: a -> Select a
+  SeBind      :: Select a -> (a -> Select b) -> Select b
+  SeFrom      :: Table t -> Select (TableAlias t)
+  SeJoin      :: JoinType -> Field t a -> Expr a -> Select (TableAlias t)
 
 instance Functor Select where
   fmap    = liftM
@@ -156,6 +156,10 @@ instance Applicative Merge where
   pure   = MePure
   (<*>)  = MeApply
 
+-- | An alias for 'EsExec'.
+execSelect :: Select (SelectStmt a) -> ExecSelect [a]
+execSelect = EsExec
+
 -- | Run queries for each element in a list. The queries may be merged into optimized queries.
 for :: [a] -> (a -> ExecSelect b) -> ExecSelect [b]
-for xs f = (EsExecMany . sequenceA . map (MeSelect . f)) xs
+for xs f = EsExecMany (T.for xs (MeSelect . f))
