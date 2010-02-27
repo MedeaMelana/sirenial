@@ -12,8 +12,8 @@ module Sirenial.Query (
     (#),
 
     -- * Building SELECT queries
-    Select(..), SelectStmt(..),
-    from, returnAll,
+    Select(..),
+    from, restrict,
 
     -- * Executing SELECT queries
     ExecSelect(..), Merge(..),
@@ -90,9 +90,10 @@ data TableAlias t = TableAlias { getAlias :: Int }
 
 -- | The Select monad handles the supply of new table aliases arising from FROMs and JOINs.
 data Select a where
-  SeReturn    :: a -> Select a
-  SeBind      :: Select a -> (a -> Select b) -> Select b
-  SeFrom      :: Table t -> Select (TableAlias t)
+  SeReturn  :: a -> Select a
+  SeBind    :: Select a -> (a -> Select b) -> Select b
+  SeFrom    :: Table t -> Select (TableAlias t)
+  SeWhere   :: Expr Bool -> Select ()
 
 instance Functor Select where
   fmap    = liftM
@@ -101,18 +102,13 @@ instance Monad Select where
   return  = SeReturn
   (>>=)   = SeBind
 
-data SelectStmt a = SelectStmt
-  { ssResult :: Expr a
-  , ssWhere  :: Expr Bool
-  }
-
 -- | Select from a table. (An alias for 'SeFrom'.)
 from :: Table t -> Select (TableAlias t)
 from = SeFrom
 
--- | Return an expression with no WHERE clause.
-returnAll :: Expr a -> Select (SelectStmt a)
-returnAll expr = return (SelectStmt expr (ExBool True))
+-- | Add a WHERE-clause.
+restrict :: Expr Bool -> Select ()
+restrict = SeWhere
 
 
 -- Executing SELECT queries
@@ -121,7 +117,7 @@ returnAll expr = return (SelectStmt expr (ExBool True))
 data ExecSelect a where
   EsReturn    :: a -> ExecSelect a
   EsBind      :: ExecSelect a -> (a -> ExecSelect b) -> ExecSelect b
-  EsExec      :: Select (SelectStmt a) -> ExecSelect [a]
+  EsExec      :: Select (Expr a) -> ExecSelect [a]
   EsExecMany  :: Merge a -> ExecSelect a
 
 instance Functor ExecSelect where
@@ -149,7 +145,7 @@ instance Applicative Merge where
   (<*>)  = MeApply
 
 -- | An alias for 'EsExec'.
-execSelect :: Select (SelectStmt a) -> ExecSelect [a]
+execSelect :: Select (Expr a) -> ExecSelect [a]
 execSelect = EsExec
 
 -- | Run queries for each element in a list. The queries may be merged into optimized queries.

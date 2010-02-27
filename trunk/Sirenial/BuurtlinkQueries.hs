@@ -21,19 +21,18 @@ data AdWeek = AdWeek
 
 selectAds :: (TableAlias Db.Ad -> Expr Bool) -> ExecSelect [Ad]
 selectAds f = do
+  -- Query Db.tableAd
   ads <- execSelect $ do
     a <- from Db.tableAd
-    return $ SelectStmt
-      { ssResult = Ad <$> a # Db.adId <*> a # Db.adStatus <*> pure []
-      , ssWhere  = f a
-      }
+    restrict (f a)
+    return $ Ad <$> a # Db.adId <*> a # Db.adStatus <*> pure []
+
+  -- Per ad, query Db.tableAdWeek
   for ads $ \ad -> do
     weeks <- execSelect $ do
       aw <- from Db.tableAdWeek
-      return $ SelectStmt
-        { ssResult  = AdWeek <$> aw # Db.adWeekStartsOn <*> aw # Db.adWeekTownId
-        , ssWhere   = aw # Db.adWeekAdId `ExEq` ExRef (adId ad)
-        }
+      restrict $ aw # Db.adWeekAdId `ExEq` ExRef (adId ad)
+      return $ AdWeek <$> aw # Db.adWeekStartsOn <*> aw # Db.adWeekTownId
     return (ad { adWeeks = weeks })
 
 selectAllAds :: ExecSelect [Ad]
