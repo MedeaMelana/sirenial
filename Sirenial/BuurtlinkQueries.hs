@@ -3,39 +3,43 @@ module BuurtlinkQueries where
 import qualified BuurtlinkTables as Db
 
 import Sirenial.Query
-import Sirenial.Merge
 
 import Control.Applicative
-import Data.Traversable
 import Data.Time.Calendar
 
 
-data RenderAd = RenderAd
-  { rAdId     :: Int
-  , rAdWeeks  :: [RenderAdWeek]
+data Ad = Ad
+  { adId      :: Ref Db.Ad
+  , adStatus  :: String
+  , adWeeks   :: [AdWeek]
   }
 
-data RenderAdWeek = RenderAdWeek
-  { rAdWeekStartsOn :: Day
-  , rAdWeekTownId   :: Int
+data AdWeek = AdWeek
+  { adWeekStartsOn :: Day
+  , adWeekTownId   :: Ref Db.Town
   }
 
-type S a = Select (SelectStmt a)
+selectAds :: (TableAlias Db.Ad -> Expr Bool) -> ExecSelect [Ad]
+selectAds f = do
+  ads <- execSelect $ do
+    a <- from Db.tableAd
+    return $ SelectStmt
+      { ssResult = Ad <$> a # Db.adId <*> a # Db.adStatus <*> pure []
+      , ssWhere  = f a
+      }
+  for ads $ \ad -> do
+    weeks <- execSelect $ do
+      aw <- from Db.tableAdWeek
+      return $ SelectStmt
+        { ssResult  = AdWeek <$> aw # Db.adWeekStartsOn <*> aw # Db.adWeekTownId
+        , ssWhere   = aw # Db.adWeekAdId `ExEq` ExRef (adId ad)
+        }
+    return (ad { adWeeks = weeks })
 
-selectAllAds :: S (Ref Db.Ad, Day)
-selectAllAds = do
-  a   <- from Db.tableAd
-  aw  <- leftJoin Db.adWeekAdId (a # Db.adId)
-  returnAll ((,) <$> (a # Db.adId) <*> aw # Db.adWeekStartsOn)
+selectAllAds :: ExecSelect [Ad]
+selectAllAds = selectAds (\_ -> ExBool True)
 
-selectAdById :: Int -> S (Ref Db.Ad, Day)
+selectAdById :: Ref Db.Ad -> ExecSelect Ad
 selectAdById adId = do
-  a   <- from Db.tableAd
-  aw  <- leftJoin Db.adWeekAdId (a # Db.adId)
-  return $ SelectStmt
-    { ssResult = (,) <$> (a # Db.adId) <*> (aw # Db.adWeekStartsOn)
-    , ssWhere  = (a # Db.adId) `ExEq` ExRef adId
-    }
-
-selectAdsByIds :: [Int] -> Merge [(Ref Db.Ad, Day)]
-selectAdsByIds = concatSelect . map selectAdById
+  [ad] <- selectAds (\a -> a # Db.adId `ExEq` ExRef adId)
+  return ad
