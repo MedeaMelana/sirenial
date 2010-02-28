@@ -2,6 +2,9 @@
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE Rank2Types #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module Sirenial.Query (
     -- * Describing tables
@@ -10,11 +13,12 @@ module Sirenial.Query (
 
     -- * SQL expressions
     Expr(..), TableAlias(..), ToExpr(..),
-    (#), (.==.),
+    (#), (.==.), (.<.), (.&&.),
 
     -- * Building SELECT queries
-    Select(..),
+    Select,
     from, restrict,
+    SelectStmt(..), toStmt,
 
     -- * Executing SELECT queries
     ExecSelect(..), Merge(..),
@@ -28,7 +32,12 @@ import qualified Data.Traversable as T
 import Data.Time.Calendar
 import Control.Applicative
 import Control.Monad
-import Text.Read
+import Control.Monad.State
+import Control.Arrow
+import Text.Read (readPrec)
+
+import Database.HDBC
+import Data.Convertible
 
 
 -- Describing tables and their fields.
@@ -40,11 +49,20 @@ data Table t = Table
   }
 
 -- | @Ref t@ is the type of the primary key to table @t@.
-newtype Ref t = Ref { getRef :: Int }
-  deriving Eq
+newtype Ref t = Ref { getRef :: Integer }
+  deriving (Eq, Ord, Num)
 
 instance Show (Ref t) where show (Ref r) = show r
 instance Read (Ref t) where readPrec = Ref <$> readPrec
+
+instance Convertible SqlValue (Ref t) where
+  safeConvert sql =
+    case safeConvert sql of
+      Left e -> Left e
+      Right n -> Right (Ref n)
+
+instance Convertible (Ref t) SqlValue where
+  safeConvert = safeConvert . getRef
 
 -- | A typed field in a table.
 data Field t a = Field
@@ -74,12 +92,13 @@ foreignKey t name _ = Field t name TyRef
 data Expr a where
   ExPure    :: a -> Expr a
   ExApply   :: Expr (a -> b) -> Expr a -> Expr b
-  ExGet     :: TableAlias t -> Field t a -> Expr a
+  ExGet     :: Convertible SqlValue a => TableAlias t -> Field t a -> Expr a
   ExEq      :: Eq a => Expr a -> Expr a -> Expr Bool
+  ExLT      :: Ord a => Expr a -> Expr a -> Expr Bool
+  ExAnd     :: Expr Bool -> Expr Bool -> Expr Bool
   ExBool    :: Bool -> Expr Bool
   ExString  :: String -> Expr String
   ExRef     :: Ref t -> Expr (Ref t)
-  ExAlias   :: Int -> Expr (TableAlias t)
 
 instance Functor Expr where
   fmap   = liftA
@@ -98,7 +117,7 @@ instance  ToExpr Bool     where expr = ExBool
 instance  ToExpr (Ref t)  where expr = ExRef
 
 -- | Retrieve a field from a table. (An alias for 'ExGet'.)
-(#) :: TableAlias t -> Field t a -> Expr a
+(#) :: Convertible SqlValue a => TableAlias t -> Field t a -> Expr a
 (#) = ExGet
 
 -- | Compare two values for equality.
@@ -106,30 +125,46 @@ instance  ToExpr (Ref t)  where expr = ExRef
 (.==.) = ExEq
 infixl 4 .==.
 
+(.<.) :: Ord a => Expr a -> Expr a -> Expr Bool
+(.<.) = ExLT
+infix 4 .<.
+
+(.&&.) :: Expr Bool -> Expr Bool -> Expr Bool
+(.&&.) = ExAnd
+infixr 3 .&&.
+
 
 -- Building SELECT queries
 
 -- | The Select monad handles the supply of new table aliases arising from FROMs and JOINs.
-data Select a where
-  SeReturn  :: a -> Select a
-  SeBind    :: Select a -> (a -> Select b) -> Select b
-  SeFrom    :: Table t -> Select (TableAlias t)
-  SeWhere   :: Expr Bool -> Select ()
+newtype Select a = Select (State ([String], [Expr Bool]) a)
+  deriving (Functor, Monad, MonadState ([String], [Expr Bool]))
 
-instance Functor Select where
-  fmap    = liftM
-
-instance Monad Select where
-  return  = SeReturn
-  (>>=)   = SeBind
+instance Applicative Select where
+  pure    = return
+  (<*>)   = ap
 
 -- | Select from a table. (An alias for 'SeFrom'.)
 from :: Table t -> Select (TableAlias t)
-from = SeFrom
+from t = do
+  (fs, ws) <- get
+  put (fs ++ [tableName t], ws)
+  return (TableAlias (length fs))
 
 -- | Add a WHERE-clause.
 restrict :: Expr Bool -> Select ()
-restrict = SeWhere
+restrict p = modify (second (++ [p]))
+
+data SelectStmt a = SelectStmt
+  { ssFroms   :: [String]
+  , ssWheres  :: [Expr Bool]
+  , ssResult  :: Expr a
+  }
+
+toStmt :: Select (Expr a) -> SelectStmt a
+toStmt (Select s) = SelectStmt froms wheres result
+  where
+    (result, (froms, wheres)) = runState s ([], [])
 
 
 -- Executing SELECT queries
