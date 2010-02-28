@@ -1,5 +1,5 @@
 default:
-	ghci -fwarn-unused-imports BuurtlinkQueries
+	ghci -Wall -fno-warn-missing-signatures -fno-warn-name-shadowing BuurtlinkQueries
 
 configure:
 	cabal configure
