@@ -83,11 +83,10 @@ setAdStatus adId newStatus =
     ( [Db.adStatus := expr newStatus]
     , a # Db.adId .==. expr adId )
 
-qAdIds :: Select (Expr (Ref Db.Ad, String))
-qAdIds = do
+qAdIds :: (TableAlias Db.Ad -> Expr Bool) -> SelectStmt (Ref Db.Ad, String)
+qAdIds f = toStmt $ do
   a <- from Db.tableAd
-  restrict (a # Db.adId .<. expr 1000)
-  -- restrict (a # Db.adStatus .==. expr "reserved")
+  restrict (f a)
   return $ (,) <$> a # Db.adId <*> a # Db.adStatus
 
 withConn :: (forall conn. IConnection conn => conn -> IO a) -> IO a
@@ -98,15 +97,3 @@ withConn f = do
     , mysqlDatabase = "buurtlink"
     }
   f conn
-  
-test :: IO ()
-test = do
-  conn <- connectMySQL defaultMySQLConnectInfo
-    { mysqlUnixSocket = "/var/run/mysqld/mysqld.sock"
-    , mysqlUser = "root"
-    , mysqlDatabase = "buurtlink"
-    }
-  let stmt = toStmt qAdIds
-  print (stmtToSql stmt)
-  ids <- execSingle conn stmt
-  print ids

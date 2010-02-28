@@ -42,14 +42,14 @@ restrict p = modify (second (++ [p]))
 -- | A reified select statement in which aliases have been supplied.
 data SelectStmt a = SelectStmt
   { ssFroms   :: [String]
-  , ssWheres  :: [Expr Bool]
+  , ssCrit  :: Expr Bool
   , ssResult  :: Expr a
   }
 
 -- | Run the 'Select' computation, supplying aliases. The aliases are indices
 -- into the 'ssFroms' list.
 toStmt :: Select (Expr a) -> SelectStmt a
-toStmt (Select s) = SelectStmt froms wheres result
+toStmt (Select s) = SelectStmt froms (exprAnd wheres) result
   where
     (result, (froms, wheres)) = runState s ([], [])
 
@@ -60,7 +60,7 @@ toStmt (Select s) = SelectStmt froms wheres result
 data ExecSelect a where
   EsReturn    :: a -> ExecSelect a
   EsBind      :: ExecSelect a -> (a -> ExecSelect b) -> ExecSelect b
-  EsExec      :: Select (Expr a) -> ExecSelect [a]
+  EsExec      :: SelectStmt a -> ExecSelect [a]
   EsExecMany  :: Merge a -> ExecSelect a
 
 instance Functor ExecSelect where
@@ -89,7 +89,7 @@ instance Applicative Merge where
 
 -- | An alias for 'EsExec'.
 execSelect :: Select (Expr a) -> ExecSelect [a]
-execSelect = EsExec
+execSelect = EsExec . toStmt
 
 -- | Run queries for each element in a list. The queries may be merged into optimized queries.
 for :: [a] -> (a -> ExecSelect b) -> ExecSelect [b]
