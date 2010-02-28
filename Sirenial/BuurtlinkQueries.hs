@@ -1,3 +1,5 @@
+{-# LANGUAGE RankNTypes #-}
+
 module BuurtlinkQueries where
 
 import qualified BuurtlinkTables as Db
@@ -12,19 +14,22 @@ import Data.Maybe
 import Data.Time.Calendar
 import Control.Applicative
 
+import Database.HDBC
 import Database.HDBC.MySQL
 
 
 data Ad = Ad
-  { adId      :: Ref Db.Ad
-  , adStatus  :: String
-  , adWeeks   :: [AdWeek]
-  }
+    { adId      :: Ref Db.Ad
+    , adStatus  :: String
+    , adWeeks   :: [AdWeek]
+    }
+  deriving Show
 
 data AdWeek = AdWeek
-  { adWeekStartsOn :: Day
-  , adWeekTownId   :: Ref Db.Town
-  }
+    { adWeekStartsOn  :: Day
+    , adWeekTownName  :: String
+    }
+  deriving Show
 
 selectAds :: (TableAlias Db.Ad -> Expr Bool) -> ExecSelect [Ad]
 selectAds p = do
@@ -34,17 +39,37 @@ selectAds p = do
     restrict (p a)
     return $ Ad <$> a # Db.adId <*> a # Db.adStatus <*> pure []
 
-  -- Per ad, query Db.tableAdWeek to fill the adWeeks field
+  -- For each matching ad ...
   for ads $ \ad -> do
+    -- ... if the ad has been paid for ...
     if adStatus ad == "confirmed"
       then do
-        weeks <- execSelect $ do
-          aw <- from Db.tableAdWeek
-          restrict $ aw # Db.adWeekAdId .==. expr (adId ad)
-          return $ AdWeek <$> aw # Db.adWeekStartsOn <*> aw # Db.adWeekTownId
+        -- ... fetch the accompanying weeks.
+        weeks <- getAdWeeks (adId ad)
         return (ad { adWeeks = weeks })
       else do
         return ad
+
+-- | Retrieve the weeks accompanying an ad.
+getAdWeeks :: Ref Db.Ad -> ExecSelect [AdWeek]
+getAdWeeks adId = do
+  weeks <- execSelect $ do
+    aw <- from Db.tableAdWeek
+    restrict $ aw # Db.adWeekAdId .==. expr (adId)
+    return $ (,) <$> aw # Db.adWeekStartsOn <*> aw # Db.adWeekTownId
+
+  -- Fetch town names for weeks
+  for weeks $ \(startsOn, townId) ->
+    AdWeek startsOn <$> getTownName townId
+
+-- | Retrieve the town name, given a town ID.
+getTownName :: Ref Db.Town -> ExecSelect String
+getTownName townId = do
+  [townName] <- execSelect $ do
+    t <- from Db.tableTown
+    restrict (t # Db.townId .==. expr townId)
+    return (t # Db.townName)
+  return townName
 
 selectAllAds :: ExecSelect [Ad]
 selectAllAds = selectAds (\_ -> expr True)
@@ -65,6 +90,15 @@ qAdIds = do
   -- restrict (a # Db.adStatus .==. expr "reserved")
   return $ (,) <$> a # Db.adId <*> a # Db.adStatus
 
+withConn :: (forall conn. IConnection conn => conn -> IO a) -> IO a
+withConn f = do
+  conn <- connectMySQL defaultMySQLConnectInfo
+    { mysqlUnixSocket = "/var/run/mysqld/mysqld.sock"
+    , mysqlUser = "root"
+    , mysqlDatabase = "buurtlink"
+    }
+  f conn
+  
 test :: IO ()
 test = do
   conn <- connectMySQL defaultMySQLConnectInfo
@@ -74,5 +108,5 @@ test = do
     }
   let stmt = toStmt qAdIds
   print (stmtToSql stmt)
-  ids <- go conn stmt
+  ids <- execSingle conn stmt
   print ids
