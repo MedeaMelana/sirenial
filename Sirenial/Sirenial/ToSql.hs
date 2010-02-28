@@ -2,13 +2,13 @@
 
 module Sirenial.ToSql where
 
-import Sirenial.Query
+import Sirenial.Tables
+import Sirenial.Expr
+import Sirenial.Select
 
 import Data.List
 import Control.Applicative
-import Control.Monad.State
 import Control.Monad.Writer
-import Control.Arrow
 
 import Database.HDBC
 

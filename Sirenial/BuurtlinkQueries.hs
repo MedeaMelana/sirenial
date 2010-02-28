@@ -2,10 +2,17 @@ module BuurtlinkQueries where
 
 import qualified BuurtlinkTables as Db
 
-import Sirenial.Query
+import Sirenial.Tables
+import Sirenial.Expr
+import Sirenial.Select
+import Sirenial.Modify
+import Sirenial.ToSql
 
-import Control.Applicative
+import Data.Maybe
 import Data.Time.Calendar
+import Control.Applicative
+
+import Database.HDBC.MySQL
 
 
 data Ad = Ad
@@ -42,13 +49,30 @@ selectAds p = do
 selectAllAds :: ExecSelect [Ad]
 selectAllAds = selectAds (\_ -> expr True)
 
-selectAdById :: Ref Db.Ad -> ExecSelect Ad
-selectAdById adId = do
-  [ad] <- selectAds (\a -> a # Db.adId .==. expr adId)
-  return ad
+selectAdById :: Ref Db.Ad -> ExecSelect (Maybe Ad)
+selectAdById adId = listToMaybe <$> selectAds (\a -> a # Db.adId .==. expr adId)
 
 setAdStatus :: Ref Db.Ad -> String -> ModifyStmt
 setAdStatus adId newStatus =
   ExecUpdate Db.tableAd $ \a ->
     ( [Db.adStatus := expr newStatus]
     , a # Db.adId .==. expr adId )
+
+qAdIds :: Select (Expr (Ref Db.Ad, String))
+qAdIds = do
+  a <- from Db.tableAd
+  restrict (a # Db.adId .<. expr 1000)
+  -- restrict (a # Db.adStatus .==. expr "reserved")
+  return $ (,) <$> a # Db.adId <*> a # Db.adStatus
+
+test :: IO ()
+test = do
+  conn <- connectMySQL defaultMySQLConnectInfo
+    { mysqlUnixSocket = "/var/run/mysqld/mysqld.sock"
+    , mysqlUser = "root"
+    , mysqlDatabase = "buurtlink"
+    }
+  let stmt = toStmt qAdIds
+  print (stmtToSql stmt)
+  ids <- go conn stmt
+  print ids

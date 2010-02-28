@@ -2,7 +2,7 @@
 
 module BuurtlinkTables where
 
-import Sirenial.Query
+import Sirenial.Tables
 
 -- Table indices
 data Ad
