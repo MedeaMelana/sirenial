@@ -118,3 +118,5 @@ withConn f = do
 
 test :: IO (Maybe Ad)
 test = withConn $ \c -> runSuspend c $ suspendES $ selectAdById 997
+
+test2 = withConn $ \c -> runSuspend c $ suspendES $ EsExec $ qAdIds (\_ -> expr True)
