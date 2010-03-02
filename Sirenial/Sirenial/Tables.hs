@@ -22,7 +22,7 @@ data Table t = Table
 
 -- | @Ref t@ is the type of the primary key to table @t@.
 newtype Ref t = Ref { getRef :: Integer }
-  deriving (Eq, Ord, Num)
+  deriving (Enum, Eq, Integral, Num, Ord, Real)
 
 instance Show (Ref t) where show (Ref r) = show r
 instance Read (Ref t) where readPrec = Ref <$> readPrec

@@ -5,7 +5,7 @@
 module Sirenial.Expr (
     -- * SQL expressions
     Expr(..), TableAlias(..), ToExpr(..),
-    (#), (.==.), (.<.), (.&&.), (.||.), exprAnd,
+    (#), (.==.), (.<.), (.&&.), (.||.), exprAnd, exprOr,
   ) where
 
 import Sirenial.Tables
@@ -69,3 +69,7 @@ infixr 2 .||.
 exprAnd :: [Expr Bool] -> Expr Bool
 exprAnd [] = expr True
 exprAnd bs = foldr1 (.&&.) bs
+
+exprOr :: [Expr Bool] -> Expr Bool
+exprOr [] = expr False
+exprOr bs = foldr1 (.||.) bs

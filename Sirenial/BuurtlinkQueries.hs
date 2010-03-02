@@ -17,6 +17,8 @@ import Control.Applicative
 import Database.HDBC
 import Database.HDBC.MySQL
 
+import Debug.Trace
+
 
 data Ad = Ad
     { adId      :: Ref Db.Ad
@@ -39,6 +41,8 @@ selectAds p = do
     restrict (p a)
     return $ Ad <$> a # Db.adId <*> a # Db.adStatus <*> pure []
 
+  traceM ("Found " ++ show (length ads) ++ " ads: " ++ show (map adId ads))
+
   -- For each matching ad ...
   for ads $ \ad -> do
     -- ... if the ad has been paid for ...
@@ -57,10 +61,15 @@ getAdWeeks adId = do
     aw <- from Db.tableAdWeek
     restrict $ aw # Db.adWeekAdId .==. expr (adId)
     return $ (,) <$> aw # Db.adWeekStartsOn <*> aw # Db.adWeekTownId
+  
+  traceM ("Found " ++ show (length weeks) ++ " weeks for ad " ++ show adId ++ ": " ++ show (map snd weeks))
 
   -- Fetch town names for weeks
   for weeks $ \(startsOn, townId) ->
     AdWeek startsOn <$> getTownName townId
+
+traceM :: Monad m => String -> m ()
+traceM x = trace x (return ())
 
 -- | Retrieve the town name, given a town ID.
 getTownName :: Ref Db.Town -> ExecSelect String
@@ -89,6 +98,15 @@ qAdIds f = toStmt $ do
   restrict (f a)
   return $ (,) <$> a # Db.adId <*> a # Db.adStatus
 
+qAdStatus :: Ref Db.Ad -> SelectStmt String
+qAdStatus adId = toStmt $ do
+  a <- from Db.tableAd
+  restrict (a # Db.adId .==. expr adId)
+  return (a # Db.adStatus)
+
+mergeTest :: Merge ([String], [String])
+mergeTest = (,) <$> MeSelect (EsExec (qAdStatus 1)) <*> MeSelect (EsExec (qAdStatus 2))
+
 withConn :: (forall conn. IConnection conn => conn -> IO a) -> IO a
 withConn f = do
   conn <- connectMySQL defaultMySQLConnectInfo
@@ -97,3 +115,6 @@ withConn f = do
     , mysqlDatabase = "buurtlink"
     }
   f conn
+
+test :: IO (Maybe Ad)
+test = withConn $ \c -> runSuspend c $ suspendES $ selectAdById 997

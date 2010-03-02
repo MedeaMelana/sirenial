@@ -64,7 +64,7 @@ data ExecSelect a where
   EsExecMany  :: Merge a -> ExecSelect a
 
 instance Functor ExecSelect where
-  fmap    = liftM
+  fmap    = liftA
 
 instance Applicative ExecSelect where
   pure    = return
@@ -73,6 +73,8 @@ instance Applicative ExecSelect where
 instance Monad ExecSelect where
   return  = EsReturn
   (>>=)   = EsBind
+
+
 
 -- | Applicative context in which 'ExecSelect's may be merged into optimized queries.
 data Merge a where
@@ -91,6 +93,7 @@ instance Applicative Merge where
 execSelect :: Select (Expr a) -> ExecSelect [a]
 execSelect = EsExec . toStmt
 
--- | Run queries for each element in a list. The queries may be merged into optimized queries.
-for :: [a] -> (a -> ExecSelect b) -> ExecSelect [b]
+-- | Run queries for each element in a container (e.g. a list). The queries
+-- may be merged into optimized queries.
+for :: T.Traversable f => f a -> (a -> ExecSelect b) -> ExecSelect (f b)
 for xs f = EsExecMany (T.for xs (MeSelect . f))
