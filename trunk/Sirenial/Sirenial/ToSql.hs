@@ -8,7 +8,9 @@ import Sirenial.Select
 
 import Data.Function
 import Data.List
+import qualified Data.Sequence as Seq
 import qualified Data.Traversable as T
+import qualified Data.Foldable as F
 import Control.Applicative
 import Control.Monad.Writer
 import Control.Concurrent.MVar
@@ -137,7 +139,7 @@ combine (SelectStmt ts1 c1 r1) (SelectStmt ts2 c2 r2)
 data Suspend a where
   SuPure    :: a -> Suspend a
   SuApply   :: Suspend (a -> b) -> Suspend a -> Suspend b
-  SuSelect  :: SelectStmt a -> Maybe (MVar [a]) -> ([a] -> Suspend b) -> Suspend b
+  SuSelect  :: SelectStmt a -> Maybe (MVar (Seq.Seq a)) -> ([a] -> Suspend b) -> Suspend b
 
 instance Functor Suspend where
   fmap     = liftA
@@ -179,7 +181,7 @@ suspendES es =
     EsBind es' f -> suspendES es' >>= suspendES . f
 
 data Pendulum where
-  Pendulum :: SelectStmt a -> MVar [a] -> Pendulum
+  Pendulum :: SelectStmt a -> MVar (Seq.Seq a) -> Pendulum
 
 newtype CollectResult a = CollectResult (Either a (Suspend a, [Pendulum]))
 
@@ -212,13 +214,13 @@ collect s =
         Nothing ->
           return $ CollectResult $ Right $ (SuSelect s (Just v) f, [Pendulum s v])
         Just rs ->
-          collect (f rs)
+          collect (f (F.toList rs))
 
 progress :: IConnection conn => conn -> [Pendulum] -> IO ()
 progress conn (p:ps') = do
     putStrLn $ "*** Merging " ++ show (length ps) ++ " queries. "
       ++ show (1 + length ps' - length ps) ++ " queries still pending."
-    T.for ps $ \(Pendulum _ v) -> putMVar v []
+    T.for ps $ \(Pendulum _ v) -> putMVar v Seq.empty
     let stmt = SelectStmt
           { ssFroms   = froms p
           , ssCrit    = exprOr (map crit ps)
@@ -232,7 +234,7 @@ progress conn (p:ps') = do
     froms (Pendulum s _) = ssFroms s
     crit (Pendulum s _) = ssCrit s
     update v b r =
-      when b $ modifyMVar_ v (\rs -> return (rs ++ [r]))
+      when b $ modifyMVar_ v (\rs -> return (rs Seq.|> r))
 
 runSuspend :: IConnection conn => conn -> Suspend a -> IO a
 runSuspend conn s = do
