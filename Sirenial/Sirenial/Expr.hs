@@ -6,6 +6,7 @@ module Sirenial.Expr (
     -- * SQL expressions
     Expr(..), TableAlias(..), ToExpr(..),
     (#), (.==.), (.<.), (.&&.), (.||.), exprAnd, exprOr,
+    lits,
   ) where
 
 import Sirenial.Tables
@@ -44,6 +45,20 @@ class     ToExpr a        where expr :: a -> Expr a
 instance  ToExpr [Char]   where expr = ExString
 instance  ToExpr Bool     where expr = ExBool
 instance  ToExpr (Ref t)  where expr = ExRef
+
+lits :: Expr a -> [String]
+lits e =
+  case e of
+    ExPure _ -> []
+    ExApply f x -> lits f ++ lits x
+    ExGet _ _ -> []
+    ExEq x y -> lits x ++ lits y
+    ExLT x y -> lits x ++ lits y
+    ExAnd x y -> lits x ++ lits y
+    ExOr x y -> lits x ++ lits y
+    ExBool b -> [show b]
+    ExString s -> [show s]
+    ExRef r -> [show r]
 
 -- | Retrieve a field from a table. (An alias for 'ExGet'.)
 (#) :: Convertible SqlValue a => TableAlias t -> Field t a -> Expr a

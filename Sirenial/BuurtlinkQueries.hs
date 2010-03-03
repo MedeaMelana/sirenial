@@ -17,8 +17,6 @@ import Control.Applicative
 import Database.HDBC
 import Database.HDBC.MySQL
 
-import Debug.Trace
-
 
 data Ad = Ad
     { adId      :: Ref Db.Ad
@@ -33,15 +31,13 @@ data AdWeek = AdWeek
     }
   deriving Show
 
-selectAds :: (TableAlias Db.Ad -> Expr Bool) -> ExecSelect [Ad]
+selectAds :: (TableAlias Db.Ad -> Expr Bool) -> Suspend [Ad]
 selectAds p = do
   -- Query Db.tableAd
   ads <- execSelect $ do
     a <- from Db.tableAd
     restrict (p a)
     return $ Ad <$> a # Db.adId <*> a # Db.adStatus <*> pure []
-
-  traceM ("Found " ++ show (length ads) ++ " ads: " ++ show (map adId ads))
 
   -- For each matching ad ...
   for ads $ \ad -> do
@@ -55,24 +51,19 @@ selectAds p = do
         return ad
 
 -- | Retrieve the weeks accompanying an ad.
-getAdWeeks :: Ref Db.Ad -> ExecSelect [AdWeek]
+getAdWeeks :: Ref Db.Ad -> Suspend [AdWeek]
 getAdWeeks adId = do
   weeks <- execSelect $ do
     aw <- from Db.tableAdWeek
-    restrict $ aw # Db.adWeekAdId .==. expr (adId)
+    restrict $ aw # Db.adWeekAdId .==. expr adId
     return $ (,) <$> aw # Db.adWeekStartsOn <*> aw # Db.adWeekTownId
   
-  traceM ("Found " ++ show (length weeks) ++ " weeks for ad " ++ show adId ++ ": " ++ show (map snd weeks))
-
   -- Fetch town names for weeks
   for weeks $ \(startsOn, townId) ->
     AdWeek startsOn <$> getTownName townId
 
-traceM :: Monad m => String -> m ()
-traceM x = trace x (return ())
-
 -- | Retrieve the town name, given a town ID.
-getTownName :: Ref Db.Town -> ExecSelect String
+getTownName :: Ref Db.Town -> Suspend String
 getTownName townId = do
   [townName] <- execSelect $ do
     t <- from Db.tableTown
@@ -80,10 +71,22 @@ getTownName townId = do
     return (t # Db.townName)
   return townName
 
-selectAllAds :: ExecSelect [Ad]
+getAdWeekPrice :: Ref Db.Town -> Suspend Int
+getAdWeekPrice townId = do
+  querySingle $ do
+    t <- from Db.tableTown
+    restrict (t # Db.townId .==. expr townId)
+    return (t # Db.townAdWeekPrice)
+
+querySingle :: Select (Expr a) -> Suspend a
+querySingle stmt = do
+  [v] <- execSelect stmt
+  return v
+
+selectAllAds :: Suspend [Ad]
 selectAllAds = selectAds (\_ -> expr True)
 
-selectAdById :: Ref Db.Ad -> ExecSelect (Maybe Ad)
+selectAdById :: Ref Db.Ad -> Suspend (Maybe Ad)
 selectAdById adId = listToMaybe <$> selectAds (\a -> a # Db.adId .==. expr adId)
 
 setAdStatus :: Ref Db.Ad -> String -> ModifyStmt
@@ -92,8 +95,8 @@ setAdStatus adId newStatus =
     ( [Db.adStatus := expr newStatus]
     , a # Db.adId .==. expr adId )
 
-qAdIds :: (TableAlias Db.Ad -> Expr Bool) -> SelectStmt (Ref Db.Ad, String)
-qAdIds f = toStmt $ do
+qAdIds :: (TableAlias Db.Ad -> Expr Bool) -> Select (Expr (Ref Db.Ad, String))
+qAdIds f = do
   a <- from Db.tableAd
   restrict (f a)
   return $ (,) <$> a # Db.adId <*> a # Db.adStatus
@@ -104,10 +107,11 @@ qAdStatus adId = toStmt $ do
   restrict (a # Db.adId .==. expr adId)
   return (a # Db.adStatus)
 
-mergeTest :: Merge ([String], [String])
-mergeTest = (,) <$> MeSelect (EsExec (qAdStatus 1)) <*> MeSelect (EsExec (qAdStatus 2))
+-- mergeTest :: Suspend ([String], [String])
+-- mergeTest = (,) <$> MeSelect (EsExec (qAdStatus 1)) <*> MeSelect (EsExec (qAdStatus 2))
 
 withConn :: (forall conn. IConnection conn => conn -> IO a) -> IO a
+-- withConn = undefined
 withConn f = do
   conn <- connectMySQL defaultMySQLConnectInfo
     { mysqlUnixSocket = "/var/run/mysqld/mysqld.sock"
@@ -116,7 +120,14 @@ withConn f = do
     }
   f conn
 
-test :: IO (Maybe Ad)
-test = withConn $ \c -> runSuspend c $ suspendES $ selectAdById 997
+test :: IO ([Maybe Ad])
+test = withConn $ \c -> runSuspend c $ for [996,997] selectAdById
 
-test2 = withConn $ \c -> runSuspend c $ suspendES $ EsExec $ qAdIds (\_ -> expr True)
+test2 = withConn $ \c -> runSuspend c $ execSelect $ qAdIds (\_ -> expr True)
+
+bla :: Suspend ()
+bla = ((() <$ execSelect q) <* execSelect q)
+    >>= \_ -> return ()
+  where
+    q = return (pure ())
+
