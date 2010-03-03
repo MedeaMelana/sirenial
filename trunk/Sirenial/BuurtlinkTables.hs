@@ -25,3 +25,4 @@ adWeekAdId      = foreignKey tableAdWeek "adId"        tableAd
 adWeekTownId    = foreignKey tableAdWeek "townIdCopy"  tableTown
 adWeekStartsOn  = Field      tableAdWeek "startsOn"    TyDay
 townName        = Field      tableTown   "townName"    TyString
+townAdWeekPrice = Field      tableTown   "adWeekPrice" TyInt

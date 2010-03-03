@@ -7,13 +7,15 @@ module Sirenial.Select (
     SelectStmt(..), toStmt,
     
     -- * Executing SELECT queries
-    ExecSelect(..), Merge(..), execSelect, for,
+    Suspend(..), execSelect, for,
   ) where
 
 import Sirenial.Tables
 import Sirenial.Expr
 
+import Control.Concurrent.MVar
 import qualified Data.Traversable as T
+import qualified Data.Sequence as Seq
 import Control.Applicative
 import Control.Monad.State
 import Control.Arrow
@@ -56,44 +58,28 @@ toStmt (Select s) = SelectStmt froms (exprAnd wheres) result
 
 -- Executing SELECT queries
 
--- | Monadic context in which SELECT queries may be executed.
-data ExecSelect a where
-  EsReturn    :: a -> ExecSelect a
-  EsBind      :: ExecSelect a -> (a -> ExecSelect b) -> ExecSelect b
-  EsExec      :: SelectStmt a -> ExecSelect [a]
-  EsExecMany  :: Merge a -> ExecSelect a
+data Suspend a where
+  SuPure    :: a -> Suspend a
+  SuApply   :: Suspend (a -> b) -> Suspend a -> Suspend b
+  SuBind    :: Suspend a -> (a -> Suspend b) -> Suspend b
+  SuSelect  :: SelectStmt a -> Maybe (MVar (Seq.Seq a)) -> Suspend [a]
 
-instance Functor ExecSelect where
+instance Functor Suspend where
   fmap    = liftA
 
-instance Applicative ExecSelect where
-  pure    = return
-  (<*>)   = ap
+instance Applicative Suspend where
+  pure    = SuPure
+  (<*>)   = SuApply
 
-instance Monad ExecSelect where
-  return  = EsReturn
-  (>>=)   = EsBind
-
-
-
--- | Applicative context in which 'ExecSelect's may be merged into optimized queries.
-data Merge a where
-  MePure    :: a -> Merge a
-  MeApply   :: Merge (a -> b) -> Merge a -> Merge b
-  MeSelect  :: ExecSelect a -> Merge a
-
-instance Functor Merge where
-  fmap   = liftA
-
-instance Applicative Merge where
-  pure   = MePure
-  (<*>)  = MeApply
+instance Monad Suspend where
+  return  = SuPure
+  (>>=)   = SuBind
 
 -- | An alias for 'EsExec'.
-execSelect :: Select (Expr a) -> ExecSelect [a]
-execSelect = EsExec . toStmt
+execSelect :: Select (Expr a) -> Suspend [a]
+execSelect s = SuSelect (toStmt s) Nothing
 
 -- | Run queries for each element in a container (e.g. a list). The queries
 -- may be merged into optimized queries.
-for :: T.Traversable f => f a -> (a -> ExecSelect b) -> ExecSelect (f b)
-for xs f = EsExecMany (T.for xs (MeSelect . f))
+for :: T.Traversable f => f a -> (a -> Suspend b) -> Suspend (f b)
+for = T.for
