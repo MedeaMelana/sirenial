@@ -111,12 +111,12 @@ reify cols expr row = go expr
 data Pendulum where
   Pendulum :: SelectStmt a -> MVar (Seq.Seq a) -> Pendulum
 
--- | Either a Suspend turns out to be a pure value, or it still has some queries to be executed.
-collect :: Suspend a -> IO (Either a (Suspend a, [Pendulum]))
+-- | Either a Query turns out to be a pure value, or it still has some queries to be executed.
+collect :: Query a -> IO (Either a (Query a, [Pendulum]))
 collect s =
   case s of
-    SuPure x -> return (Left x)
-    SuApply sf sx -> do
+    QuPure x -> return (Left x)
+    QuApply sf sx -> do
       cf <- collect sf
       cx <- collect sx
       return $ case (cf, cx) of
@@ -128,18 +128,18 @@ collect s =
           Right (($ x) <$> sf', fps)
         (Right (sf', fps), Right (sx', xps)) ->
           Right (sf' <*> sx', fps ++ xps)
-    SuBind sx f -> do
+    QuBind sx f -> do
       cx <- collect sx
       case cx of
         Left x -> collect (f x)
         Right (sx', xps)  -> return $ Right (sx' >>= f, xps)
-    SuSelect s mv -> do
+    QuSelect s mv -> do
       v <- case mv of
         Nothing  -> newEmptyMVar
         Just v   -> return v
       mrs <- tryTakeMVar v
       case mrs of
-        Nothing -> return $ Right (SuSelect s (Just v), [Pendulum s v])
+        Nothing -> return $ Right (QuSelect s (Just v), [Pendulum s v])
         Just rs -> return $ Left (F.toList rs)
 
 progress :: IConnection conn => conn -> [Pendulum] -> IO ()
@@ -160,12 +160,12 @@ progress conn (p:ps') = do
     update v b r =
       when b $ modifyMVar_ v (\rs -> return (rs Seq.|> r))
 
-runSuspend :: IConnection conn => conn -> Suspend a -> IO a
-runSuspend conn s = do
+runQuery :: IConnection conn => conn -> Query a -> IO a
+runQuery conn s = do
   ei <- collect s
   case ei of
     Left v ->
       return v
     Right (s', ps) -> do
       progress conn ps
-      runSuspend conn s'
+      runQuery conn s'

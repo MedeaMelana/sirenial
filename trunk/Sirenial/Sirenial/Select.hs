@@ -7,7 +7,7 @@ module Sirenial.Select (
     SelectStmt(..), toStmt,
     
     -- * Executing SELECT queries
-    Suspend(..), execSelect, for,
+    Query(..), select, for,
   ) where
 
 import Sirenial.Tables
@@ -58,28 +58,32 @@ toStmt (Select s) = SelectStmt froms (exprAnd wheres) result
 
 -- Executing SELECT queries
 
-data Suspend a where
-  SuPure    :: a -> Suspend a
-  SuApply   :: Suspend (a -> b) -> Suspend a -> Suspend b
-  SuBind    :: Suspend a -> (a -> Suspend b) -> Suspend b
-  SuSelect  :: SelectStmt a -> Maybe (MVar (Seq.Seq a)) -> Suspend [a]
+-- | The query monad allows the execution of SELECT queries. Parallel
+-- composition of queries using 'QuApply' allows them to be merged
+-- efficiently, while sequential composition using 'QuBind' allows inspection
+-- of results before deciding on subsequent queries.
+data Query a where
+  QuPure    :: a -> Query a
+  QuSelect  :: SelectStmt a -> Maybe (MVar (Seq.Seq a)) -> Query [a]
+  QuApply   :: Query (a -> b) -> Query a -> Query b
+  QuBind    :: Query a -> (a -> Query b) -> Query b
 
-instance Functor Suspend where
+instance Functor Query where
   fmap    = liftA
 
-instance Applicative Suspend where
-  pure    = SuPure
-  (<*>)   = SuApply
+instance Applicative Query where
+  pure    = QuPure
+  (<*>)   = QuApply
 
-instance Monad Suspend where
-  return  = SuPure
-  (>>=)   = SuBind
+instance Monad Query where
+  return  = QuPure
+  (>>=)   = QuBind
 
--- | An alias for 'EsExec'.
-execSelect :: Select (Expr a) -> Suspend [a]
-execSelect s = SuSelect (toStmt s) Nothing
+-- | Execute a SELECT query.
+select :: Select (Expr a) -> Query [a]
+select s = QuSelect (toStmt s) Nothing
 
 -- | Run queries for each element in a container (e.g. a list). The queries
 -- may be merged into optimized queries.
-for :: T.Traversable f => f a -> (a -> Suspend b) -> Suspend (f b)
+for :: T.Traversable f => f a -> (a -> Query b) -> Query (f b)
 for = T.for
