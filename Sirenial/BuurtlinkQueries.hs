@@ -31,10 +31,10 @@ data AdWeek = AdWeek
     }
   deriving Show
 
-selectAds :: (TableAlias Db.Ad -> Expr Bool) -> Suspend [Ad]
+selectAds :: (TableAlias Db.Ad -> Expr Bool) -> Query [Ad]
 selectAds p = do
   -- Query Db.tableAd
-  ads <- execSelect $ do
+  ads <- select $ do
     a <- from Db.tableAd
     restrict (p a)
     return $ Ad <$> a # Db.adId <*> a # Db.adStatus <*> pure []
@@ -51,9 +51,9 @@ selectAds p = do
         return ad
 
 -- | Retrieve the weeks accompanying an ad.
-getAdWeeks :: Ref Db.Ad -> Suspend [AdWeek]
+getAdWeeks :: Ref Db.Ad -> Query [AdWeek]
 getAdWeeks adId = do
-  weeks <- execSelect $ do
+  weeks <- select $ do
     aw <- from Db.tableAdWeek
     restrict $ aw # Db.adWeekAdId .==. expr adId
     return $ (,) <$> aw # Db.adWeekStartsOn <*> aw # Db.adWeekTownId
@@ -63,30 +63,30 @@ getAdWeeks adId = do
     AdWeek startsOn <$> getTownName townId
 
 -- | Retrieve the town name, given a town ID.
-getTownName :: Ref Db.Town -> Suspend String
+getTownName :: Ref Db.Town -> Query String
 getTownName townId = do
-  [townName] <- execSelect $ do
+  [townName] <- select $ do
     t <- from Db.tableTown
     restrict (t # Db.townId .==. expr townId)
     return (t # Db.townName)
   return townName
 
-getAdWeekPrice :: Ref Db.Town -> Suspend Int
+getAdWeekPrice :: Ref Db.Town -> Query Int
 getAdWeekPrice townId = do
   querySingle $ do
     t <- from Db.tableTown
     restrict (t # Db.townId .==. expr townId)
     return (t # Db.townAdWeekPrice)
 
-querySingle :: Select (Expr a) -> Suspend a
+querySingle :: Select (Expr a) -> Query a
 querySingle stmt = do
-  [v] <- execSelect stmt
+  [v] <- select stmt
   return v
 
-selectAllAds :: Suspend [Ad]
+selectAllAds :: Query [Ad]
 selectAllAds = selectAds (\_ -> expr True)
 
-selectAdById :: Ref Db.Ad -> Suspend (Maybe Ad)
+selectAdById :: Ref Db.Ad -> Query (Maybe Ad)
 selectAdById adId = listToMaybe <$> selectAds (\a -> a # Db.adId .==. expr adId)
 
 setAdStatus :: Ref Db.Ad -> String -> ModifyStmt
@@ -107,11 +107,7 @@ qAdStatus adId = toStmt $ do
   restrict (a # Db.adId .==. expr adId)
   return (a # Db.adStatus)
 
--- mergeTest :: Suspend ([String], [String])
--- mergeTest = (,) <$> MeSelect (EsExec (qAdStatus 1)) <*> MeSelect (EsExec (qAdStatus 2))
-
 withConn :: (forall conn. IConnection conn => conn -> IO a) -> IO a
--- withConn = undefined
 withConn f = do
   conn <- connectMySQL defaultMySQLConnectInfo
     { mysqlUnixSocket = "/var/run/mysqld/mysqld.sock"
@@ -119,15 +115,3 @@ withConn f = do
     , mysqlDatabase = "buurtlink"
     }
   f conn
-
-test :: IO ([Maybe Ad])
-test = withConn $ \c -> runSuspend c $ for [996,997] selectAdById
-
-test2 = withConn $ \c -> runSuspend c $ execSelect $ qAdIds (\_ -> expr True)
-
-bla :: Suspend ()
-bla = ((() <$ execSelect q) <* execSelect q)
-    >>= \_ -> return ()
-  where
-    q = return (pure ())
-
