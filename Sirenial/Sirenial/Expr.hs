@@ -6,7 +6,7 @@ module Sirenial.Expr (
     -- * SQL expressions
     Expr(..), TableAlias(..), ToExpr(..),
     (#), (.==.), (.<.), (.&&.), (.||.), exprAnd, exprOr,
-    lits,
+    isPure,
   ) where
 
 import Sirenial.Tables
@@ -22,13 +22,14 @@ data Expr a where
   ExPure    :: a -> Expr a
   ExApply   :: Expr (a -> b) -> Expr a -> Expr b
   ExGet     :: Convertible SqlValue a => TableAlias t -> Field t a -> Expr a
+  -- ExInList  :: Eq a => Expr a -> [Expr a] -> Expr Bool
   ExEq      :: Eq a => Expr a -> Expr a -> Expr Bool
   ExLT      :: Ord a => Expr a -> Expr a -> Expr Bool
-  ExAnd     :: Expr Bool -> Expr Bool -> Expr Bool
-  ExOr      :: Expr Bool -> Expr Bool -> Expr Bool
-  ExBool    :: Bool -> Expr Bool
-  ExString  :: String -> Expr String
-  ExRef     :: Ref t -> Expr (Ref t)
+  ExAnd     :: [Expr Bool] -> Expr Bool
+  ExOr      :: [Expr Bool] -> Expr Bool
+  -- ExString  :: String -> Expr String
+  -- ExRef     :: Ref t -> Expr (Ref t)
+  ExLit     :: Convertible a SqlValue => a -> Expr a
 
 instance Functor Expr where
   fmap   = liftA
@@ -42,23 +43,9 @@ data TableAlias t = TableAlias { getAlias :: Int }
 
 -- | Lift a value into the 'Expr' functor.
 class     ToExpr a        where expr :: a -> Expr a
-instance  ToExpr [Char]   where expr = ExString
-instance  ToExpr Bool     where expr = ExBool
-instance  ToExpr (Ref t)  where expr = ExRef
-
-lits :: Expr a -> [String]
-lits e =
-  case e of
-    ExPure _ -> []
-    ExApply f x -> lits f ++ lits x
-    ExGet _ _ -> []
-    ExEq x y -> lits x ++ lits y
-    ExLT x y -> lits x ++ lits y
-    ExAnd x y -> lits x ++ lits y
-    ExOr x y -> lits x ++ lits y
-    ExBool b -> [show b]
-    ExString s -> [show s]
-    ExRef r -> [show r]
+instance  ToExpr [Char]   where expr = ExLit
+instance  ToExpr Bool     where expr b = if b then ExAnd [] else ExOr []
+instance  ToExpr (Ref t)  where expr = ExLit
 
 -- | Retrieve a field from a table. (An alias for 'ExGet'.)
 (#) :: Convertible SqlValue a => TableAlias t -> Field t a -> Expr a
@@ -66,7 +53,9 @@ lits e =
 
 -- | Compare two values for equality.
 (.==.) :: Eq a => Expr a -> Expr a -> Expr Bool
-(.==.) = ExEq
+x@(ExGet _ _) .==. y = ExEq x y
+x .==. y@(ExGet _ _) = ExEq y x
+x .==. y = ExEq x y
 infixl 4 .==.
 
 (.<.) :: Ord a => Expr a -> Expr a -> Expr Bool
@@ -74,17 +63,59 @@ infixl 4 .==.
 infix 4 .<.
 
 (.&&.) :: Expr Bool -> Expr Bool -> Expr Bool
-(.&&.) = ExAnd
+ExAnd ps .&&. ExAnd qs = ExAnd (ps ++ qs)
+ExAnd ps .&&. q = ExAnd (ps ++ [q])
+p .&&. ExAnd qs = ExAnd ([p] ++ qs)
+p .&&. q = ExAnd [p, q]
 infixr 3 .&&.
 
 (.||.) :: Expr Bool -> Expr Bool -> Expr Bool
-(.||.) = ExOr
+ExOr ps .||. ExOr qs = ExOr (ps ++ qs)
+ExOr ps .||. q = ExOr (ps ++ [q])
+p .||. ExOr qs = ExOr ([p] ++ qs)
+p .||. q = ExOr [p, q]
 infixr 2 .||.
 
 exprAnd :: [Expr Bool] -> Expr Bool
-exprAnd [] = expr True
-exprAnd bs = foldr1 (.&&.) bs
+exprAnd [p] = p
+exprAnd ps = ExAnd ps
 
 exprOr :: [Expr Bool] -> Expr Bool
-exprOr [] = expr False
-exprOr bs = foldr1 (.||.) bs
+exprOr [p] = p
+exprOr ps = ExOr ps
+
+isPure :: Expr a -> Maybe a
+isPure expr =
+  case expr of
+    ExPure x       -> pure x
+    ExApply ef ex  -> isPure ef <*> isPure ex
+    ExGet _ _      -> Nothing
+    -- ExInList x ys  -> elem <$> isPure x <*> mapM isPure ys
+    ExEq x y       -> (==) <$> isPure x <*> isPure y
+    ExLT x y       -> (<)  <$> isPure x <*> isPure y
+    ExAnd ps       -> and  <$> mapM isPure ps
+    ExOr ps        -> or   <$> mapM isPure ps
+    ExLit x        -> pure x
+    -- ExString s     -> pure s
+    -- ExRef r        -> pure r
+
+isTrue :: Expr Bool -> Bool
+isTrue expr =
+  case expr of
+    ExAnd ps  -> all isTrue ps
+    ExOr ps   -> any isTrue ps
+    p ->
+      case isPure p of
+        Just b -> b
+        Nothing -> False
+
+-- optimize :: Expr a -> Expr a
+-- optimize expr =
+--   case expr of
+--     ExOr (ExEq (ExGet a f) x : ps) ->
+--       case matchGets a f ps of
+--         (yes, no) -> exInList (ExGet a f) (x : yes) .||. exprOr no
+--   where
+--     matchGets a f [] = ([], [])
+--     matchGets a f ()
+--       case e of
