@@ -104,8 +104,19 @@ qAdIds f = do
 qAdStatus :: Ref Db.Ad -> SelectStmt String
 qAdStatus adId = toStmt $ do
   a <- from Db.tableAd
-  restrict (a # Db.adId .==. expr adId)
+  let ok = a # Db.adId .==. expr adId
+  restrict (ok .||. ok .||. ok)
   return (a # Db.adStatus)
+
+-- paginate :: Int -> Int -> Select (Expr a) -> Query ([a], Int)
+-- paginate page pageSize stmt = do
+--   res <- select $ do
+--     limit (page * pageSize) pageSize
+--     stmt
+--   cnt <- select $ do
+--     stmt
+--     return count
+--   return (res, cnt)
 
 withConn :: (forall conn. IConnection conn => conn -> IO a) -> IO a
 withConn f = do

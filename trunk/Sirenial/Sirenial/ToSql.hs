@@ -1,4 +1,5 @@
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE StandaloneDeriving #-}
 
 module Sirenial.ToSql where
 
@@ -8,6 +9,9 @@ import Sirenial.Select
 
 import Data.Function
 import Data.List
+import Data.Either
+import Control.Arrow (first, second)
+import qualified Data.Map as M
 import qualified Data.Sequence as Seq
 import qualified Data.Traversable as T
 import qualified Data.Foldable as F
@@ -28,51 +32,107 @@ selectedFields = nub . sort . go
         ExApply f x  -> go f ++ go x
         ExEq x y     -> go x ++ go y
         ExLT x y     -> go x ++ go y
-        ExAnd x y    -> go x ++ go y
+        ExAnd ps     -> concatMap go ps
+        ExOr ps      -> concatMap go ps
         _            -> []
 
-stmtToSql :: SelectStmt a -> String
+stmtToSql :: SelectStmt a -> QueryString
 stmtToSql (SelectStmt froms crit result) =
   execWriter (tellSelect (selectedFields result) froms crit)
 
-tellSelect :: [(Int, String)] -> [String] -> Expr Bool -> Writer String ()
+tellS :: String -> Writer QueryString ()
+tellS s = tell [Left s]
+
+tellSelect :: [(Int, String)] -> [String] -> Expr Bool -> Writer QueryString ()
 tellSelect fields tables crit = do
-  tell "select "
+  tellS "select "
   if null fields
-    then tell "0"
+    then tellS "0"
     else do
       let fn (alias, fieldName) = "t" ++ show alias ++ "." ++ fieldName
-      tell $ intercalate ", " $ map fn fields
+      tellS $ intercalate ", " $ map fn fields
 
   -- Guaranteed to be selecting from at least one table.
-  tell "\nfrom "
+  tellS "\nfrom "
   let tn (t, i) = t ++ " t" ++ show (i :: Integer)
-  tell $ intercalate ", "  $ map tn $ zip tables [0..]
+  tellS $ intercalate ", "  $ map tn $ zip tables [0..]
   
   case crit of
-    ExBool True -> return ()
+    ExAnd [] -> return ()
     _ -> do
-      tell "\nwhere "
+      tellS "\nwhere "
       tellExpr crit
 
-tellExpr :: Expr a -> Writer String ()
-tellExpr = go
-  where
-    go :: Expr a -> Writer String ()
-    go expr = case expr of
-      ExPure _     -> error "Pure values cannot be converted to SQL."
-      ExApply _ _  -> error "Pure values cannot be converted to SQL."
-      ExGet a f    -> tell $ "t" ++ show (getAlias a) ++ "." ++ fieldName f
-      ExEq x y     -> parens $ go x >> tell " = " >> go y
-      ExLT x y     -> parens $ go x >> tell " < " >> go y
-      ExAnd x y    -> parens $ go x >> tell " and " >> go y
-      ExOr  x y    -> parens $ go x >> tell " or " >> go y
-      ExBool b     -> tell $ show $ (if b then 1 else 0 :: Int)
-      ExString s   -> tell $ show s
-      ExRef r      -> tell $ show r
+tellExpr :: Expr a -> Writer QueryString ()
+tellExpr expr = case expr of
+    ExPure _     -> error "Pure values cannot be converted to SQL."
+    ExApply _ _  -> error "Pure values cannot be converted to SQL."
+    ExGet a f    -> tell [Left $ "t" ++ show (getAlias a) ++ "." ++ fieldName f]
+    -- ExInList x ys  -> parens $ tellIn x ys
+    ExEq x y     -> parens $ tellExpr x >> tellS " = " >> tellExpr y
+    ExLT x y     -> parens $ tellExpr x >> tellS " < " >> tellExpr y
+    ExAnd ps     -> reduce " and " "1" ps
+    ExOr  ps     -> tell (disjToQs ps)
+    ExLit x      -> tell [Right (toSql x)]
+    -- ExString s   -> tell $ show s
+    -- ExRef r      -> tell $ show r
 
-parens :: Writer String () -> Writer String ()
-parens x = tell "(" >> x >> tell ")"
+reduce :: String -> String -> [Expr a] -> Writer QueryString ()
+reduce sep zero exprs =
+  case exprs of
+    []      -> tellS zero
+    [expr]  -> tellExpr expr
+    _       -> parens $ sequence_ $ intersperse (tellS sep) (map tellExpr exprs)
+
+reduce' :: String -> String -> [QueryString] -> Writer QueryString ()
+reduce' sep zero exprs =
+  case exprs of
+    []      -> tellS zero
+    [expr]  -> tell expr
+    _       -> parens $ sequence_ $ intersperse (tellS sep) (map tell exprs)
+
+parens :: Writer QueryString () -> Writer QueryString ()
+parens x = tellS "(" >> x >> tellS ")"
+
+type QueryString = [Either String SqlValue]
+
+prepareQs :: QueryString -> (String, [SqlValue])
+prepareQs = F.foldMap f
+  where
+    f p = case p of
+      Left s   -> (s,    [])
+      Right v  -> ("?",  [v])
+
+renderQs :: QueryString -> String
+renderQs = concatMap $ \p ->
+  case p of
+    Left s -> s
+    Right v -> "{" ++ show v ++ "}"
+
+-- It'd be nice if we could perform this rewrite on Exprs directly, but we
+-- don't have enough type information for that.
+disjToQs :: [Expr Bool] -> QueryString
+disjToQs exprs = allToQs $ first group $ partitionEithers $ map part exprs
+  where
+    part :: Expr a -> Either ((Int, String), QueryString) QueryString
+    part expr =
+      case expr of
+        ExEq (ExGet alias field) y  -> Left ((getAlias alias, fieldName field), exprToQs y)
+        _                           -> Right (exprToQs expr)
+    group :: [((Int, String), QueryString)] -> [((Int, String), [QueryString])]
+    group = M.toList . M.fromListWith (++) . map (second (:[]))
+    allToQs :: ([((Int, String), [QueryString])], [QueryString]) -> QueryString
+    allToQs (gs, ss) = disjToQs' (map singleToQs gs ++ ss)
+    singleToQs :: ((Int, String), [QueryString]) -> QueryString
+    singleToQs ((a, f), es) = [Left $ "t" ++ show a ++ "." ++ f] ++
+      case nub es of
+        [e]    -> [Left " = "] ++ e
+        nubEs  -> [Left $ " in ("] ++ intercalate [Left ","] nubEs ++ [Left ")"]
+    disjToQs' :: [QueryString] -> QueryString
+    disjToQs' = execWriter . reduce' " or " "0"
+
+exprToQs :: Expr a -> QueryString
+exprToQs = execWriter . tellExpr
 
 execSingle :: IConnection conn => conn -> SelectStmt a -> IO [a]
 execSingle c s 
@@ -80,10 +140,11 @@ execSingle c s
   | otherwise         = do
       let result = ssResult s
       let cols = selectedFields result
-      let sql = stmtToSql s
-      putStrLn $ "*** Executing query:\n" ++ sql
+      let qs = stmtToSql s
+      let (sql, vs) = prepareQs qs
+      putStrLn $ "*** Executing query:\n" ++ renderQs qs
       stmt <- prepare c sql
-      execute stmt []
+      execute stmt vs
       rows <- fetchAllRows' stmt
       return (map (reify cols result) rows)
 
@@ -101,12 +162,9 @@ reify cols expr row = go expr
             Nothing     -> error "oops"
         ExEq x y     -> go x == go y
         ExLT x y     -> go x < go y
-        ExAnd x y    -> go x && go y
-        ExOr x y     -> go x || go y
-        ExBool b     -> b
-        ExString s   -> s
-        ExRef r      -> r
-
+        ExAnd ps     -> and (map go ps)
+        ExOr  ps     -> or (map go ps)
+        ExLit x      -> x
 
 data Pendulum where
   Pendulum :: SelectStmt a -> MVar (Seq.Seq a) -> Pendulum

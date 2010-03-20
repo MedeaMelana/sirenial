@@ -4,6 +4,9 @@ module BuurtlinkTables where
 
 import Sirenial.Tables
 
+import Data.Time.Calendar
+
+
 -- Table indices
 data Ad
 data AdWeek
@@ -20,9 +23,9 @@ adWeekId  = primKey tableAdWeek
 townId    = primKey tableTown
 
 -- Other fields
-adStatus        = Field      tableAd     "status"      TyString
+adStatus        = Field      tableAd     "status"      :: Field Ad String
 adWeekAdId      = foreignKey tableAdWeek "adId"        tableAd
 adWeekTownId    = foreignKey tableAdWeek "townIdCopy"  tableTown
-adWeekStartsOn  = Field      tableAdWeek "startsOn"    TyDay
-townName        = Field      tableTown   "townName"    TyString
-townAdWeekPrice = Field      tableTown   "adWeekPrice" TyInt
+adWeekStartsOn  = Field      tableAdWeek "startsOn"    :: Field AdWeek Day
+townName        = Field      tableTown   "townName"    :: Field Town String
+townAdWeekPrice = Field      tableTown   "adWeekPrice" :: Field Town Int
