@@ -10,17 +10,22 @@ import Sirenial.Select
 import Data.Function
 import Data.List
 import Data.Either
+import Data.Monoid
+import Control.Monad (when)
 import Control.Arrow (first, second)
 import qualified Data.Map as M
 import qualified Data.Sequence as Seq
 import qualified Data.Traversable as T
 import qualified Data.Foldable as F
+import qualified Data.FMList as FM
 import Control.Applicative
-import Control.Monad.Writer
 import Control.Concurrent.MVar
 
 import Database.HDBC
 
+
+(<>) :: Monoid m => m -> m -> m
+(<>) = mappend
 
 selectedFields :: Expr a -> [(Int, String)]
 selectedFields = nub . sort . go
@@ -29,72 +34,59 @@ selectedFields = nub . sort . go
     go expr =
       case expr of
         ExGet a f    -> [(getAlias a, fieldName f)]
-        ExApply f x  -> go f ++ go x
-        ExEq x y     -> go x ++ go y
-        ExLT x y     -> go x ++ go y
+        ExApply f x  -> go f <> go x
+        ExEq x y     -> go x <> go y
+        ExLT x y     -> go x <> go y
         ExAnd ps     -> concatMap go ps
         ExOr ps      -> concatMap go ps
         _            -> []
 
-stmtToSql :: SelectStmt a -> QueryString
-stmtToSql (SelectStmt froms crit result) =
-  execWriter (tellSelect (selectedFields result) froms crit)
+stmtToQs :: SelectStmt a -> QueryString
+stmtToQs (SelectStmt froms crit result) =
+    s "select " <> fieldsQs <> s "\nfrom " <> fromQs <> whereQs
+  where
+    fields = selectedFields result
+    fieldsQs
+      | null fields  = s "0"
+      | otherwise    = s $ intercalate ", " $ map fn fields
+    fn (alias, fieldName) = "t" <> show alias <> "." <> fieldName
+    tn (t, i) = t <> " t" <> show (i :: Integer)
+    fromQs = s $ intercalate ", "  $ map tn $ zip froms [0..]
+    whereQs :: QueryString
+    whereQs =
+      case crit of
+        ExAnd [] -> FM.empty
+        _ -> do
+          s "\nwhere " <> exprToQs crit
 
-tellS :: String -> Writer QueryString ()
-tellS s = tell [Left s]
+s :: String -> QueryString
+s = FM.singleton . Left
 
-tellSelect :: [(Int, String)] -> [String] -> Expr Bool -> Writer QueryString ()
-tellSelect fields tables crit = do
-  tellS "select "
-  if null fields
-    then tellS "0"
-    else do
-      let fn (alias, fieldName) = "t" ++ show alias ++ "." ++ fieldName
-      tellS $ intercalate ", " $ map fn fields
-
-  -- Guaranteed to be selecting from at least one table.
-  tellS "\nfrom "
-  let tn (t, i) = t ++ " t" ++ show (i :: Integer)
-  tellS $ intercalate ", "  $ map tn $ zip tables [0..]
-  
-  case crit of
-    ExAnd [] -> return ()
-    _ -> do
-      tellS "\nwhere "
-      tellExpr crit
-
-tellExpr :: Expr a -> Writer QueryString ()
-tellExpr expr = case expr of
+exprToQs :: Expr a -> QueryString
+exprToQs expr = case expr of
     ExPure _     -> error "Pure values cannot be converted to SQL."
     ExApply _ _  -> error "Pure values cannot be converted to SQL."
-    ExGet a f    -> tell [Left $ "t" ++ show (getAlias a) ++ "." ++ fieldName f]
-    -- ExInList x ys  -> parens $ tellIn x ys
-    ExEq x y     -> parens $ tellExpr x >> tellS " = " >> tellExpr y
-    ExLT x y     -> parens $ tellExpr x >> tellS " < " >> tellExpr y
-    ExAnd ps     -> reduce " and " "1" ps
-    ExOr  ps     -> tell (disjToQs ps)
-    ExLit x      -> tell [Right (toSql x)]
-    -- ExString s   -> tell $ show s
-    -- ExRef r      -> tell $ show r
+    ExGet a f    -> s $ "t" <> show (getAlias a) <> "." <> fieldName f
+    ExEq x y     -> parens $ exprToQs x >> s " = " >> exprToQs y
+    ExLT x y     -> parens $ exprToQs x >> s " < " >> exprToQs y
+    ExAnd ps     -> reduce " and " "1" (map exprToQs ps)
+    ExOr  ps     -> disjToQs ps
+    ExLit x      -> FM.singleton $ Right (toSql x)
 
-reduce :: String -> String -> [Expr a] -> Writer QueryString ()
+reduce :: String -> String -> [QueryString] -> QueryString
 reduce sep zero exprs =
   case exprs of
-    []      -> tellS zero
-    [expr]  -> tellExpr expr
-    _       -> parens $ sequence_ $ intersperse (tellS sep) (map tellExpr exprs)
+    []      -> s zero
+    [expr]  -> expr
+    _       -> parens $ mconcat $ intersperse (s sep) exprs
 
-reduce' :: String -> String -> [QueryString] -> Writer QueryString ()
-reduce' sep zero exprs =
-  case exprs of
-    []      -> tellS zero
-    [expr]  -> tell expr
-    _       -> parens $ sequence_ $ intersperse (tellS sep) (map tell exprs)
+parens :: QueryString -> QueryString
+parens x = s "(" <> x <> s ")"
 
-parens :: Writer QueryString () -> Writer QueryString ()
-parens x = tellS "(" >> x >> tellS ")"
+type QueryString = FM.FMList (Either String SqlValue)
 
-type QueryString = [Either String SqlValue]
+eqFM :: Eq a => FM.FMList a -> FM.FMList a -> Bool
+eqFM = (==) `on` FM.toList
 
 prepareQs :: QueryString -> (String, [SqlValue])
 prepareQs = F.foldMap f
@@ -104,35 +96,32 @@ prepareQs = F.foldMap f
       Right v  -> ("?",  [v])
 
 renderQs :: QueryString -> String
-renderQs = concatMap $ \p ->
+renderQs = F.concatMap $ \p ->
   case p of
     Left s -> s
-    Right v -> "{" ++ show v ++ "}"
+    Right v -> "{" <> show v <> "}"
 
 -- It'd be nice if we could perform this rewrite on Exprs directly, but we
 -- don't have enough type information for that.
 disjToQs :: [Expr Bool] -> QueryString
-disjToQs exprs = allToQs $ first group $ partitionEithers $ map part exprs
+disjToQs = allToQs . first group . partitionEithers . map part
   where
     part :: Expr a -> Either ((Int, String), QueryString) QueryString
     part expr =
       case expr of
         ExEq (ExGet alias field) y  -> Left ((getAlias alias, fieldName field), exprToQs y)
         _                           -> Right (exprToQs expr)
-    group :: [((Int, String), QueryString)] -> [((Int, String), [QueryString])]
-    group = M.toList . M.fromListWith (++) . map (second (:[]))
+    group :: Ord k => [(k, v)] -> [(k, [v])]
+    group = M.toList . M.fromListWith (<>) . reverse . map (second (:[]))
     allToQs :: ([((Int, String), [QueryString])], [QueryString]) -> QueryString
-    allToQs (gs, ss) = disjToQs' (map singleToQs gs ++ ss)
+    allToQs (gs, ss) = disjToQs' (map singleToQs gs <> ss)
     singleToQs :: ((Int, String), [QueryString]) -> QueryString
-    singleToQs ((a, f), es) = [Left $ "t" ++ show a ++ "." ++ f] ++
-      case nub es of
-        [e]    -> [Left " = "] ++ e
-        nubEs  -> [Left $ " in ("] ++ intercalate [Left ","] nubEs ++ [Left ")"]
+    singleToQs ((a, f), es) = s ("t" <> show a <> "." <> f) <>
+      case nubBy eqFM es of
+        [e]    -> s " = " <> e
+        nubEs  -> s " in (" <> mconcat (intersperse (s ",") nubEs) <> s ")"
     disjToQs' :: [QueryString] -> QueryString
-    disjToQs' = execWriter . reduce' " or " "0"
-
-exprToQs :: Expr a -> QueryString
-exprToQs = execWriter . tellExpr
+    disjToQs' = reduce " or " "0"
 
 execSingle :: IConnection conn => conn -> SelectStmt a -> IO [a]
 execSingle c s 
@@ -140,9 +129,9 @@ execSingle c s
   | otherwise         = do
       let result = ssResult s
       let cols = selectedFields result
-      let qs = stmtToSql s
+      let qs = stmtToQs s
       let (sql, vs) = prepareQs qs
-      putStrLn $ "*** Executing query:\n" ++ renderQs qs
+      putStrLn $ "*** Executing query:\n" <> renderQs qs
       stmt <- prepare c sql
       execute stmt vs
       rows <- fetchAllRows' stmt
@@ -185,7 +174,7 @@ collect s =
         (Right (sf', fps), Left x) ->
           Right (($ x) <$> sf', fps)
         (Right (sf', fps), Right (sx', xps)) ->
-          Right (sf' <*> sx', fps ++ xps)
+          Right (sf' <*> sx', fps <> xps)
     QuBind sx f -> do
       cx <- collect sx
       case cx of
