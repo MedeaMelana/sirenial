@@ -7,19 +7,20 @@ import Sirenial.Tables
 import Sirenial.Expr
 import Sirenial.Select
 
+import Prelude hiding (concatMap, and, or, sequence_, concat)
 import Data.Function
-import Data.List
 import Data.Either
 import Data.Monoid
-import Control.Monad (when)
-import Control.Arrow (first, second)
+import Data.Foldable
+import qualified Data.FMList as FM
+import qualified Data.List as L
 import qualified Data.Map as M
 import qualified Data.Sequence as Seq
 import qualified Data.Traversable as T
-import qualified Data.Foldable as F
-import qualified Data.FMList as FM
 import Control.Applicative
 import Control.Concurrent.MVar
+import Control.Arrow (first, second)
+import Control.Monad (when)
 
 import Database.HDBC
 
@@ -28,7 +29,7 @@ import Database.HDBC
 (<>) = mappend
 
 selectedFields :: Expr a -> [(Int, String)]
-selectedFields = nub . sort . go
+selectedFields = L.nub . L.sort . go
   where
     go :: Expr a -> [(Int, String)]
     go expr =
@@ -48,10 +49,10 @@ stmtToQs (SelectStmt froms crit result) =
     fields = selectedFields result
     fieldsQs
       | null fields  = s "0"
-      | otherwise    = s $ intercalate ", " $ map fn fields
+      | otherwise    = s $ L.intercalate ", " $ map fn fields
     fn (alias, fieldName) = "t" <> show alias <> "." <> fieldName
     tn (t, i) = t <> " t" <> show (i :: Integer)
-    fromQs = s $ intercalate ", "  $ map tn $ zip froms [0..]
+    fromQs = s $ L.intercalate ", "  $ map tn $ zip froms [0..]
     whereQs :: QueryString
     whereQs =
       case crit of
@@ -78,7 +79,7 @@ reduce sep zero exprs =
   case exprs of
     []      -> s zero
     [expr]  -> expr
-    _       -> parens $ mconcat $ intersperse (s sep) exprs
+    _       -> parens $ mconcat $ L.intersperse (s sep) exprs
 
 parens :: QueryString -> QueryString
 parens x = s "(" <> x <> s ")"
@@ -89,14 +90,14 @@ eqFM :: Eq a => FM.FMList a -> FM.FMList a -> Bool
 eqFM = (==) `on` FM.toList
 
 prepareQs :: QueryString -> (String, [SqlValue])
-prepareQs = F.foldMap f
+prepareQs = foldMap f
   where
     f p = case p of
       Left s   -> (s,    [])
       Right v  -> ("?",  [v])
 
 renderQs :: QueryString -> String
-renderQs = F.concatMap $ \p ->
+renderQs = concatMap $ \p ->
   case p of
     Left s -> s
     Right v -> "{" <> show v <> "}"
@@ -117,9 +118,9 @@ disjToQs = allToQs . first group . partitionEithers . map part
     allToQs (gs, ss) = disjToQs' (map singleToQs gs <> ss)
     singleToQs :: ((Int, String), [QueryString]) -> QueryString
     singleToQs ((a, f), es) = s ("t" <> show a <> "." <> f) <>
-      case nubBy eqFM es of
+      case L.nubBy eqFM es of
         [e]    -> s " = " <> e
-        nubEs  -> s " in (" <> mconcat (intersperse (s ",") nubEs) <> s ")"
+        nubEs  -> s " in (" <> mconcat (L.intersperse (s ",") nubEs) <> s ")"
     disjToQs' :: [QueryString] -> QueryString
     disjToQs' = reduce " or " "0"
 
@@ -146,7 +147,7 @@ reify cols expr row = go expr
         ExPure x     -> x
         ExApply f x  -> go f (go x)
         ExGet a f    ->
-          case elemIndex (getAlias a, fieldName f) cols of
+          case L.elemIndex (getAlias a, fieldName f) cols of
             Just index  -> fromSql (row !! index)
             Nothing     -> error "oops"
         ExEq x y     -> go x == go y
@@ -187,7 +188,7 @@ collect s =
       mrs <- tryTakeMVar v
       case mrs of
         Nothing -> return $ Right (QuSelect s (Just v), [Pendulum s v])
-        Just rs -> return $ Left (F.toList rs)
+        Just rs -> return $ Left (toList rs)
 
 progress :: IConnection conn => conn -> [Pendulum] -> IO ()
 progress conn (p:ps') = do
