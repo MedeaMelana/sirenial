@@ -22,13 +22,10 @@ data Expr a where
   ExPure    :: a -> Expr a
   ExApply   :: Expr (a -> b) -> Expr a -> Expr b
   ExGet     :: Convertible SqlValue a => TableAlias t -> Field t a -> Expr a
-  -- ExInList  :: Eq a => Expr a -> [Expr a] -> Expr Bool
   ExEq      :: Eq a => Expr a -> Expr a -> Expr Bool
   ExLT      :: Ord a => Expr a -> Expr a -> Expr Bool
   ExAnd     :: [Expr Bool] -> Expr Bool
   ExOr      :: [Expr Bool] -> Expr Bool
-  -- ExString  :: String -> Expr String
-  -- ExRef     :: Ref t -> Expr (Ref t)
   ExLit     :: Convertible a SqlValue => a -> Expr a
 
 instance Functor Expr where
