@@ -4,7 +4,7 @@
 module Sirenial.Select (
     -- * Building SELECT queries
     Select, from, restrict,
-    SelectStmt(..), toStmt,
+    SelectStmt(..), toStmt, stmtToQs,
     
     -- * Executing SELECT queries
     Query(..), select, for,
@@ -12,10 +12,13 @@ module Sirenial.Select (
 
 import Sirenial.Tables
 import Sirenial.Expr
+import Sirenial.QueryString
 
-import Control.Concurrent.MVar
+import Data.Monoid
+import Data.List (intercalate)
 import qualified Data.Traversable as T
 import qualified Data.Sequence as Seq
+import Control.Concurrent.MVar
 import Control.Applicative
 import Control.Monad.State
 import Control.Arrow
@@ -54,6 +57,28 @@ toStmt :: Select (Expr a) -> SelectStmt a
 toStmt (Select s) = SelectStmt froms (exprAnd wheres) result
   where
     (result, (froms, wheres)) = runState s ([], [])
+
+(<>) :: Monoid m => m -> m -> m
+(<>) = mappend
+
+-- | Render a SELECT statement as query string.
+stmtToQs :: SelectStmt a -> QueryString
+stmtToQs (SelectStmt froms crit result) =
+    qss "select " <> fieldsQs <> qss "\nfrom " <> fromQs <> whereQs
+  where
+    fields = selectedFields result
+    fieldsQs
+      | null fields  = qss "0"
+      | otherwise    = qss $ intercalate ", " $ map fn fields
+    fn (alias, fieldName) = "t" <> show alias <> "." <> fieldName
+    tn (t, i) = t <> " t" <> show (i :: Integer)
+    fromQs = qss $ intercalate ", "  $ map tn $ zip froms [0..]
+    whereQs :: QueryString
+    whereQs =
+      case crit of
+        ExAnd [] -> mempty
+        _ -> do
+          qss "\nwhere " <> exprToQs crit
 
 
 -- Executing SELECT queries

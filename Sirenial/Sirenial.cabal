@@ -19,10 +19,11 @@ Build-type:     Simple
 
 
 Library
-  Exposed-Modules:  Sirenial.Tables, Sirenial.Expr, Sirenial.Select, Sirenial.Modify
+  Exposed-Modules:  Sirenial.Tables, Sirenial.Expr, Sirenial.Select, Sirenial.Modify, Sirenial.ToSql, Sirenial.QueryString
   Build-Depends:    base >= 4 && < 5,
                     convertible >= 1.0.8 && < 1.1,
                     HDBC >= 2.2.2 && < 2.3,
                     mtl >= 1.1.0.2 && < 1.2,
-                    containers >= 0.2.0.1 && < 0.3
+                    containers >= 0.2.0.1 && < 0.3,
+                    fmlist >= 0.7 && < 0.8
 
