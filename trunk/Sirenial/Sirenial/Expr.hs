@@ -6,15 +6,21 @@ module Sirenial.Expr (
     -- * SQL expressions
     Expr(..), TableAlias(..), ToExpr(..),
     (#), (.==.), (.<.), (.&&.), (.||.), exprAnd, exprOr,
-    isPure,
+    isPure, exprToQs, selectedFields
   ) where
 
 import Sirenial.Tables
+import Sirenial.QueryString
 
 import Control.Applicative
 import Control.Monad.State
 import Database.HDBC
+import Data.Either
+import Data.Monoid
 import Data.Convertible
+import Data.List
+import qualified Data.Map as M
+import Control.Arrow (first, second)
 
 
 -- | SQL expressions indexed by their type.
@@ -106,13 +112,63 @@ isTrue expr =
         Just b -> b
         Nothing -> False
 
--- optimize :: Expr a -> Expr a
--- optimize expr =
---   case expr of
---     ExOr (ExEq (ExGet a f) x : ps) ->
---       case matchGets a f ps of
---         (yes, no) -> exInList (ExGet a f) (x : yes) .||. exprOr no
---   where
---     matchGets a f [] = ([], [])
---     matchGets a f ()
---       case e of
+(<>) :: Monoid m => m -> m -> m
+(<>) = mappend
+
+selectedFields :: Expr a -> [(Int, String)]
+selectedFields = nub . sort . go
+  where
+    go :: Expr a -> [(Int, String)]
+    go expr =
+      case expr of
+        ExGet a f    -> [(getAlias a, fieldName f)]
+        ExApply f x  -> go f <> go x
+        ExEq x y     -> go x <> go y
+        ExLT x y     -> go x <> go y
+        ExAnd ps     -> concatMap go ps
+        ExOr ps      -> concatMap go ps
+        _            -> []
+
+-- | Render an SQL expression as query string.
+exprToQs :: Expr a -> QueryString
+exprToQs expr = case expr of
+    ExPure _     -> error "Pure values cannot be converted to SQL."
+    ExApply _ _  -> error "Pure values cannot be converted to SQL."
+    ExGet a f    -> qss $ "t" <> show (getAlias a) <> "." <> fieldName f
+    ExEq x y     -> parens $ exprToQs x <> qss " = " <> exprToQs y
+    ExLT x y     -> parens $ exprToQs x <> qss " < " <> exprToQs y
+    ExAnd ps     -> reduce " and " "1" (map exprToQs ps)
+    ExOr  ps     -> disjToQs ps
+    ExLit x      -> qsv (toSql x)
+
+reduce :: String -> String -> [QueryString] -> QueryString
+reduce sep zero exprs =
+  case exprs of
+    []      -> qss zero
+    [expr]  -> expr
+    _       -> parens $ mconcat $ intersperse (qss sep) exprs
+
+parens :: QueryString -> QueryString
+parens x = qss "(" <> x <> qss ")"
+
+-- It'd be nice if we could perform this rewrite on Exprs directly, but we
+-- don't have enough type information for that.
+disjToQs :: [Expr Bool] -> QueryString
+disjToQs = allToQs . first group . partitionEithers . map part
+  where
+    part :: Expr a -> Either ((Int, String), QueryString) QueryString
+    part expr =
+      case expr of
+        ExEq (ExGet alias field) y  -> Left ((getAlias alias, fieldName field), exprToQs y)
+        _                           -> Right (exprToQs expr)
+    group :: Ord k => [(k, v)] -> [(k, [v])]
+    group = M.toList . M.fromListWith (<>) . reverse . map (second (:[]))
+    allToQs :: ([((Int, String), [QueryString])], [QueryString]) -> QueryString
+    allToQs (gs, ss) = disjToQs' (map singleToQs gs <> ss)
+    singleToQs :: ((Int, String), [QueryString]) -> QueryString
+    singleToQs ((a, f), es) = qss ("t" <> show a <> "." <> f) <>
+      case nub es of
+        [e]    -> qss " = " <> e
+        nubEs  -> qss " in (" <> mconcat (intersperse (qss ",") nubEs) <> qss ")"
+    disjToQs' :: [QueryString] -> QueryString
+    disjToQs' = reduce " or " "0"
