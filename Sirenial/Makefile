@@ -9,3 +9,8 @@ docs: configure
 
 opendocs: docs
 	open dist/doc/html/Sirenial/index.html
+
+clean:
+	rm -rf dist BuurtlinkTest
+	find . -name '*.hi' -exec rm {} \;
+	find . -name '*.o' -exec rm {} \;

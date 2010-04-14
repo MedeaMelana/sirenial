@@ -17,7 +17,6 @@ import Sirenial.QueryString
 import Data.Monoid
 import Data.List (intercalate)
 import qualified Data.Traversable as T
-import qualified Data.Sequence as Seq
 import Control.Concurrent.MVar
 import Control.Applicative
 import Control.Monad.State
@@ -76,9 +75,8 @@ stmtToQs (SelectStmt froms crit result) =
     whereQs :: QueryString
     whereQs =
       case crit of
-        ExAnd [] -> mempty
-        _ -> do
-          qss "\nwhere " <> exprToQs crit
+        ExAnd []  -> mempty
+        _         -> qss "\nwhere " <> exprToQs crit
 
 
 -- Executing SELECT queries
@@ -89,7 +87,7 @@ stmtToQs (SelectStmt froms crit result) =
 -- of results before deciding on subsequent queries.
 data Query a where
   QuPure    :: a -> Query a
-  QuSelect  :: SelectStmt a -> Maybe (MVar (Seq.Seq a)) -> Query [a]
+  QuSelect  :: SelectStmt a -> Maybe (MVar [a]) -> Query [a]
   QuApply   :: Query (a -> b) -> Query a -> Query b
   QuBind    :: Query a -> (a -> Query b) -> Query b
 
