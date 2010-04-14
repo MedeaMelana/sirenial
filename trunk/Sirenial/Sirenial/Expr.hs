@@ -6,7 +6,7 @@ module Sirenial.Expr (
     -- * SQL expressions
     Expr(..), TableAlias(..), ToExpr(..),
     (#), (.==.), (.<.), (.&&.), (.||.), exprAnd, exprOr,
-    isPure, exprToQs, selectedFields
+    isPure, isTrue, isFalse, exprToQs, selectedFields
   ) where
 
 import Sirenial.Tables
@@ -93,14 +93,11 @@ isPure expr =
     ExPure x       -> pure x
     ExApply ef ex  -> isPure ef <*> isPure ex
     ExGet _ _      -> Nothing
-    -- ExInList x ys  -> elem <$> isPure x <*> mapM isPure ys
     ExEq x y       -> (==) <$> isPure x <*> isPure y
     ExLT x y       -> (<)  <$> isPure x <*> isPure y
     ExAnd ps       -> and  <$> mapM isPure ps
     ExOr ps        -> or   <$> mapM isPure ps
     ExLit x        -> pure x
-    -- ExString s     -> pure s
-    -- ExRef r        -> pure r
 
 isTrue :: Expr Bool -> Bool
 isTrue expr =
@@ -109,8 +106,18 @@ isTrue expr =
     ExOr ps   -> any isTrue ps
     p ->
       case isPure p of
-        Just b -> b
-        Nothing -> False
+        Just b   -> b
+        Nothing  -> False
+
+isFalse :: Expr Bool -> Bool
+isFalse expr =
+  case expr of
+    ExAnd ps  -> any isTrue ps
+    ExOr ps   -> all isTrue ps
+    p ->
+      case isPure p of
+        Just b   -> not b
+        Nothing  -> False
 
 (<>) :: Monoid m => m -> m -> m
 (<>) = mappend

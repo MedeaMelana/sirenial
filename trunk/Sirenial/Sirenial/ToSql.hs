@@ -18,11 +18,9 @@ import Data.Either
 import Data.Monoid
 import qualified Data.List as L
 import Data.Foldable
-import qualified Data.Sequence as Seq
 import qualified Data.Traversable as T
 import Control.Applicative
 import Control.Concurrent.MVar
-import Control.Monad (when)
 
 import Database.HDBC
 
@@ -45,6 +43,22 @@ runSelectStmt c qss
       rows <- fetchAllRows' stmt
       return (map (reify cols result) rows)
 
+stmtsToQs :: [String] -> [(Int, String)] -> Expr Bool -> QueryString
+stmtsToQs froms fields crit =
+    qss "select " <> fieldsQs <> qss "\nfrom " <> fromQs <> whereQs
+  where
+    fieldsQs
+      | null fields  = qss "0"
+      | otherwise    = qss $ L.intercalate ", " $ map fn fields
+    fn (alias, fieldName) = "t" <> show alias <> "." <> fieldName
+    tn (t, i) = t <> " t" <> show (i :: Integer)
+    fromQs = qss $ L.intercalate ", "  $ map tn $ zip froms [0..]
+    whereQs :: QueryString
+    whereQs =
+      if isTrue crit
+        then mempty
+        else qss "\nwhere " <> exprToQs crit
+
 reify :: [(Int, String)] -> Expr a -> [SqlValue] -> a
 reify cols expr row = go expr
   where
@@ -64,7 +78,7 @@ reify cols expr row = go expr
         ExLit x      -> x
 
 data Pendulum where
-  Pendulum :: SelectStmt a -> MVar (Seq.Seq a) -> Pendulum
+  Pendulum :: SelectStmt a -> MVar [a] -> Pendulum
 
 -- | Either a Query turns out to be a pure value, or it still has some queries to be executed.
 collect :: Query a -> IO (Either a (Query a, [Pendulum]))
@@ -97,23 +111,36 @@ collect qss =
         Nothing -> return $ Right (QuSelect qss (Just v), [Pendulum qss v])
         Just rs -> return $ Left (toList rs)
 
+runManyStmts :: IConnection conn => conn -> [Pendulum] -> IO ()
+runManyStmts conn ps = do
+    putStrLn $ "*** Executing query:\n" <> renderQs qs
+    stmt <- prepare conn sql
+    execute stmt vs
+    rows <- fetchAllRows' stmt
+    forM_ ps $ \(Pendulum st v) ->
+      putMVar v [ reify fields (ssResult st) row
+                | row <- rows
+                , reify fields (ssCrit st) row
+                ]
+  where
+    froms (Pendulum qss _) = ssFroms qss
+    crit  (Pendulum qss _) = ssCrit qss
+    f (Pendulum st _) = () <$ ssCrit st <* ssResult st
+    fields = selectedFields (T.sequenceA $ map f ps)
+    qs = stmtsToQs (froms (head ps)) fields (exprOr (map crit ps))
+    (sql, vs) = prepareQs qs
+
 progress :: IConnection conn => conn -> [Pendulum] -> IO ()
-progress conn (p:ps') = do
-    T.for ps $ \(Pendulum _ v) -> putMVar v Seq.empty
-    let stmt = SelectStmt
-          { ssFroms   = froms p
-          , ssCrit    = exprOr (map crit ps)
-          , ssResult  = T.for ps $ \(Pendulum qss v) -> update v <$> ssCrit qss <*> ssResult qss
-          }
-    actions <- runSelectStmt conn stmt
-    sequence_ (concat actions)
+progress conn (p:ps') =
+    case ps of
+      [Pendulum q v] -> do
+        res <- runSelectStmt conn q
+        putMVar v res
+      _ -> runManyStmts conn ps      
   where
     ps = p : filter ok ps'
     ok p' = froms p == froms p'
     froms (Pendulum qss _) = ssFroms qss
-    crit (Pendulum qss _) = ssCrit qss
-    update v b r =
-      when b $ modifyMVar_ v (\rs -> return (rs Seq.|> r))
 
 -- | Run a 'Query' computation against the specified connection.
 runQuery :: IConnection conn => conn -> Query a -> IO a
