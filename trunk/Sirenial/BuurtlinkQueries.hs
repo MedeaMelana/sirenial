@@ -89,11 +89,11 @@ selectAllAds = selectAds (\_ -> expr True)
 selectAdById :: Ref Db.Ad -> Query (Maybe Ad)
 selectAdById adId = listToMaybe <$> selectAds (\a -> a # Db.adId .==. expr adId)
 
-setAdStatus :: Ref Db.Ad -> String -> ModifyStmt
-setAdStatus adId newStatus =
-  ExecUpdate Db.tableAd $ \a ->
-    ( [Db.adStatus := expr newStatus]
-    , a # Db.adId .==. expr adId )
+-- setAdStatus :: Ref Db.Ad -> String -> ModifyStmt
+-- setAdStatus adId newStatus =
+--   ExecUpdate Db.tableAd $ \a ->
+--     ( [Db.adStatus := expr newStatus]
+--     , a # Db.adId .==. expr adId )
 
 qAdIds :: (TableAlias Db.Ad -> Expr Bool) -> Select (Expr (Ref Db.Ad, String))
 qAdIds f = do

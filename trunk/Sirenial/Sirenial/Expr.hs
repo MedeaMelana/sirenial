@@ -42,7 +42,7 @@ instance Applicative Expr where
   (<*>)  = ExApply
 
 -- | SQL constructs such as FROM and JOIN introduce new table aliases.
-data TableAlias t = TableAlias { getAlias :: Int }
+data TableAlias t = TableAlias { getAlias :: Maybe Int }
 
 -- | Lift a value into the 'Expr' functor.
 class     ToExpr a        where expr :: a -> Expr a
@@ -122,10 +122,10 @@ isFalse expr =
 (<>) :: Monoid m => m -> m -> m
 (<>) = mappend
 
-selectedFields :: Expr a -> [(Int, String)]
+selectedFields :: Expr a -> [(Maybe Int, String)]
 selectedFields = nub . sort . go
   where
-    go :: Expr a -> [(Int, String)]
+    go :: Expr a -> [(Maybe Int, String)]
     go expr =
       case expr of
         ExGet a f    -> [(getAlias a, fieldName f)]
@@ -141,7 +141,7 @@ exprToQs :: Expr a -> QueryString
 exprToQs expr = case expr of
     ExPure _     -> error "Pure values cannot be converted to SQL."
     ExApply _ _  -> error "Pure values cannot be converted to SQL."
-    ExGet a f    -> qss $ "t" <> show (getAlias a) <> "." <> fieldName f
+    ExGet a f    -> qss $ "t" <> maybe mempty (\a' -> show a' <> ".") (getAlias a) <> fieldName f
     ExEq x y     -> parens $ exprToQs x <> qss " = " <> exprToQs y
     ExLT x y     -> parens $ exprToQs x <> qss " < " <> exprToQs y
     ExAnd ps     -> reduce " and " "1" (map exprToQs ps)
@@ -163,17 +163,17 @@ parens x = qss "(" <> x <> qss ")"
 disjToQs :: [Expr Bool] -> QueryString
 disjToQs = allToQs . first group . partitionEithers . map part
   where
-    part :: Expr a -> Either ((Int, String), QueryString) QueryString
+    part :: Expr a -> Either ((Maybe Int, String), QueryString) QueryString
     part expr =
       case expr of
         ExEq (ExGet alias field) y  -> Left ((getAlias alias, fieldName field), exprToQs y)
         _                           -> Right (exprToQs expr)
     group :: Ord k => [(k, v)] -> [(k, [v])]
     group = M.toList . M.fromListWith (<>) . reverse . map (second (:[]))
-    allToQs :: ([((Int, String), [QueryString])], [QueryString]) -> QueryString
+    allToQs :: ([((Maybe Int, String), [QueryString])], [QueryString]) -> QueryString
     allToQs (gs, ss) = disjToQs' (map singleToQs gs <> ss)
-    singleToQs :: ((Int, String), [QueryString]) -> QueryString
-    singleToQs ((a, f), es) = qss ("t" <> show a <> "." <> f) <>
+    singleToQs :: ((Maybe Int, String), [QueryString]) -> QueryString
+    singleToQs ((a, f), es) = qss (maybe mempty (\a' -> "t" <> show a' <> ".") a <> f) <>
       case nub es of
         [e]    -> qss " = " <> e
         nubEs  -> qss " in (" <> mconcat (intersperse (qss ",") nubEs) <> qss ")"
