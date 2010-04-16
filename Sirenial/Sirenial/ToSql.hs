@@ -43,7 +43,7 @@ runSelectStmt c qss
       rows <- fetchAllRows' stmt
       return (map (reify cols result) rows)
 
-stmtsToQs :: [String] -> [(Int, String)] -> Expr Bool -> QueryString
+stmtsToQs :: [String] -> [(Maybe Int, String)] -> Expr Bool -> QueryString
 stmtsToQs froms fields crit =
     qss "select " <> fieldsQs <> qss "\nfrom " <> fromQs <> whereQs
   where
@@ -59,7 +59,7 @@ stmtsToQs froms fields crit =
         then mempty
         else qss "\nwhere " <> exprToQs crit
 
-reify :: [(Int, String)] -> Expr a -> [SqlValue] -> a
+reify :: [(Maybe Int, String)] -> Expr a -> [SqlValue] -> a
 reify cols expr row = go expr
   where
     go :: Expr a -> a

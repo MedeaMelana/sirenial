@@ -37,7 +37,7 @@ from :: Table t -> Select (TableAlias t)
 from t = do
   (fs, ws) <- get
   put (fs ++ [tableName t], ws)
-  return (TableAlias (length fs))
+  return (TableAlias (Just (length fs)))
 
 -- | Add a WHERE-clause.
 restrict :: Expr Bool -> Select ()
