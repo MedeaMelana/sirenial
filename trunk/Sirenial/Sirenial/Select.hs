@@ -4,19 +4,15 @@
 module Sirenial.Select (
     -- * Building SELECT queries
     Select, from, restrict,
-    SelectStmt(..), toStmt, stmtToQs,
+    SelectStmt(..), toStmt,
     
-    -- * Executing SELECT queries
-    Query(..), select, for,
+    -- * Combining SELECT queries
+    Query(..), select,
   ) where
 
 import Sirenial.Tables
 import Sirenial.Expr
-import Sirenial.QueryString
 
-import Data.Monoid
-import Data.List (intercalate)
-import qualified Data.Traversable as T
 import Control.Concurrent.MVar
 import Control.Applicative
 import Control.Monad.State
@@ -39,7 +35,7 @@ from t = do
   put (fs ++ [tableName t], ws)
   return (TableAlias (Just (length fs)))
 
--- | Add a WHERE-clause.
+-- | Add a WHERE-clause. Multiple WHERE-clauses are concatenated using AND.
 restrict :: Expr Bool -> Select ()
 restrict p = modify (second (++ [p]))
 
@@ -57,34 +53,14 @@ toStmt (Select s) = SelectStmt froms (exprAnd wheres) result
   where
     (result, (froms, wheres)) = runState s ([], [])
 
-(<>) :: Monoid m => m -> m -> m
-(<>) = mappend
-
--- | Render a SELECT statement as query string.
-stmtToQs :: SelectStmt a -> QueryString
-stmtToQs (SelectStmt froms crit result) =
-    qss "select " <> fieldsQs <> qss "\nfrom " <> fromQs <> whereQs
-  where
-    fields = selectedFields result
-    fieldsQs
-      | null fields  = qss "0"
-      | otherwise    = qss $ intercalate ", " $ map fn fields
-    fn (alias, fieldName) = "t" <> show alias <> "." <> fieldName
-    tn (t, i) = t <> " t" <> show (i :: Integer)
-    fromQs = qss $ intercalate ", "  $ map tn $ zip froms [0..]
-    whereQs :: QueryString
-    whereQs =
-      case crit of
-        ExAnd []  -> mempty
-        _         -> qss "\nwhere " <> exprToQs crit
-
 
 -- Executing SELECT queries
 
 -- | The query monad allows the execution of SELECT queries. Parallel
 -- composition of queries using 'QuApply' allows them to be merged
 -- efficiently, while sequential composition using 'QuBind' allows inspection
--- of results before deciding on subsequent queries.
+-- of results before deciding on subsequent queries. Notice that this means
+-- that @(\<*>) /= ap@.
 data Query a where
   QuPure    :: a -> Query a
   QuSelect  :: SelectStmt a -> Maybe (MVar [a]) -> Query [a]
@@ -105,8 +81,3 @@ instance Monad Query where
 -- | Execute a SELECT query.
 select :: Select (Expr a) -> Query [a]
 select s = QuSelect (toStmt s) Nothing
-
--- | Run queries for each element in a container (e.g. a list). The queries
--- may be merged into optimized queries.
-for :: T.Traversable f => f a -> (a -> Query b) -> Query (f b)
-for = T.for

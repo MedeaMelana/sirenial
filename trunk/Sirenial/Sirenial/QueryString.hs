@@ -1,7 +1,8 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
+-- | Utilities for building query strings.
 module Sirenial.QueryString
- ( QueryString, qss, qsv, prepareQs, renderQs, listQs ) where
+ ( QueryString, qss, qsv, prepareQs, renderQs, listQs, parens ) where
 
 import Prelude hiding (concatMap)
 import Data.Foldable (foldMap, concatMap)
@@ -43,9 +44,13 @@ renderQs = concatMap f . unQS
     f (Right v)  = "{" ++ show v ++ "}"
 
 -- | Wrap a list of query strings in list (tuple) syntax. E.g. @listQs
--- [a,b,c]@ becomes @"(a,b,c)"@.
+-- [a,b,c]@ becomes @\"(a,b,c)\"@.
 listQs :: [QueryString] -> QueryString
 listQs qs = qss "(" <> mconcat (intersperse (qss ",") qs) <> qss ")"
+
+-- | Wrap parentheses around a query string.
+parens :: QueryString -> QueryString
+parens x = qss "(" <> x <> qss ")"
 
 (<>) :: Monoid m => m -> m -> m
 (<>) = mappend
