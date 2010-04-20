@@ -4,6 +4,8 @@
 module Sirenial.QueryString
  ( QueryString, qss, qsv, prepareQs, renderQs, listQs, parens ) where
 
+import Sirenial.Util
+
 import Prelude hiding (concatMap)
 import Data.Foldable (foldMap, concatMap)
 import Data.List (intersperse)
@@ -51,6 +53,3 @@ listQs qs = qss "(" <> mconcat (intersperse (qss ",") qs) <> qss ")"
 -- | Wrap parentheses around a query string.
 parens :: QueryString -> QueryString
 parens x = qss "(" <> x <> qss ")"
-
-(<>) :: Monoid m => m -> m -> m
-(<>) = mappend

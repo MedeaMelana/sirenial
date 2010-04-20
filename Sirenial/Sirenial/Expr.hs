@@ -10,6 +10,7 @@ module Sirenial.Expr (
   ) where
 
 import Sirenial.Tables
+import Sirenial.Util
 
 import Control.Applicative
 import Control.Monad.State
@@ -51,7 +52,7 @@ instance  ToExpr [Char]   where expr = ExLit
 instance  ToExpr Bool     where expr b = if b then ExAnd [] else ExOr []
 instance  ToExpr (Ref t)  where expr = ExLit
 
--- | Retrieve a field from a table. (An alias for 'ExGet'.)
+-- | Retrieve a field from a table.
 (#) :: Convertible SqlValue a => TableAlias t -> Field t a -> Expr a
 (#) = ExGet
 
@@ -62,10 +63,12 @@ x .==. y@(ExGet _ _) = ExEq y x
 x .==. y = ExEq x y
 infixl 4 .==.
 
+-- | Less than.
 (.<.) :: Ord a => Expr a -> Expr a -> Expr Bool
 (.<.) = ExLT
 infix 4 .<.
 
+-- | Binary conjunction.
 (.&&.) :: Expr Bool -> Expr Bool -> Expr Bool
 ExAnd ps .&&. ExAnd qs = ExAnd (ps ++ qs)
 ExAnd ps .&&. q = ExAnd (ps ++ [q])
@@ -73,6 +76,7 @@ p .&&. ExAnd qs = ExAnd ([p] ++ qs)
 p .&&. q = ExAnd [p, q]
 infixr 3 .&&.
 
+-- | Binary disjunction.
 (.||.) :: Expr Bool -> Expr Bool -> Expr Bool
 ExOr ps .||. ExOr qs = ExOr (ps ++ qs)
 ExOr ps .||. q = ExOr (ps ++ [q])
@@ -80,10 +84,12 @@ p .||. ExOr qs = ExOr ([p] ++ qs)
 p .||. q = ExOr [p, q]
 infixr 2 .||.
 
+-- | N-ary conjunction.
 exprAnd :: [Expr Bool] -> Expr Bool
 exprAnd [p] = p
 exprAnd ps = ExAnd ps
 
+-- | N-ary disjunction.
 exprOr :: [Expr Bool] -> Expr Bool
 exprOr [p] = p
 exprOr ps = ExOr ps
@@ -122,9 +128,6 @@ isFalse expr =
       case isPure p of
         Just b   -> not b
         Nothing  -> False
-
-(<>) :: Monoid m => m -> m -> m
-(<>) = mappend
 
 selectedFields :: Expr a -> [(Int, String)]
 selectedFields = nub . sort . go
