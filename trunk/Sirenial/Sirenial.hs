@@ -17,7 +17,7 @@ module Sirenial (
     
     -- * Building SQL expressions
     Expr, TableAlias, ToExpr(..),
-    (#), (.==.), (.<.), (.&&.), (.||.), exprAnd, exprOr
+    lit, (#), (.==.), (.<.), (.&&.), (.||.), exprAnd, exprOr
   ) where
 
 import Sirenial.Tables

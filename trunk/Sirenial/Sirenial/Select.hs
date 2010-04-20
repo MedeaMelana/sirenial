@@ -57,10 +57,10 @@ toStmt (Select s) = SelectStmt froms (exprAnd wheres) result
 -- Executing SELECT queries
 
 -- | The query monad allows the execution of SELECT queries. Parallel
--- composition of queries using 'QuApply' allows them to be merged
--- efficiently, while sequential composition using 'QuBind' allows inspection
--- of results before deciding on subsequent queries. Notice that this means
--- that @(\<*>) /= ap@.
+-- composition of queries using '<*>' allows them to be merged efficiently,
+-- while sequential composition using '>>=' allows inspection of results
+-- before deciding on subsequent queries. Notice that this means that @('<*>')
+-- '/=' 'ap'@.
 data Query a where
   QuPure    :: a -> Query a
   QuSelect  :: SelectStmt a -> Maybe (MVar [a]) -> Query [a]
