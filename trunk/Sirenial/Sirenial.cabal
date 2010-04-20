@@ -19,7 +19,8 @@ Build-type:     Simple
 
 
 Library
-  Exposed-Modules:  Sirenial.QueryString,
+  Exposed-Modules:  Sirenial,
+                    Sirenial.QueryString,
                     Sirenial.Tables,
                     Sirenial.Expr,
                     Sirenial.Modify,

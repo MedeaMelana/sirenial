@@ -4,11 +4,7 @@ module BuurtlinkQueries where
 
 import qualified BuurtlinkTables as Db
 
-import Sirenial.Tables
-import Sirenial.Expr
-import Sirenial.Select
-import Sirenial.Modify
-import Sirenial.Execute
+import Sirenial
 
 import Data.Maybe
 import Data.Time.Calendar
@@ -101,13 +97,6 @@ qAdIds f = do
   a <- from Db.tableAd
   restrict (f a)
   return $ (,) <$> a # Db.adId <*> a # Db.adStatus
-
-qAdStatus :: Ref Db.Ad -> SelectStmt String
-qAdStatus adId = toStmt $ do
-  a <- from Db.tableAd
-  let ok = a # Db.adId .==. expr adId
-  restrict (ok .||. ok .||. ok)
-  return (a # Db.adStatus)
 
 -- paginate :: Int -> Int -> Select (Expr a) -> Query ([a], Int)
 -- paginate page pageSize stmt = do
