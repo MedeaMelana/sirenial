@@ -15,13 +15,10 @@ import Control.Applicative
 import Text.Read (readPrec)
 
 -- | A table description, indexed by its own phantom type.
-data Table t = Table
-  { tableName  :: String
-  , tableKey   :: Field t (Ref t)
-  }
+data Table t  = Table { tableName  :: String }
 
 -- | @Ref t@ is the type of the primary key to table @t@.
-newtype Ref t = Ref { getRef :: Integer }
+newtype Ref t = Ref   { getRef     :: Integer }
   deriving (Enum, Eq, Integral, Num, Ord, Real)
 
 instance Show (Ref t) where show (Ref r) = show r

@@ -13,9 +13,9 @@ data AdWeek
 data Town
 
 -- Tables
-tableAd      = Table "ads"        adId      :: Table Ad
-tableAdWeek  = Table "ads_weeks"  adWeekId  :: Table AdWeek
-tableTown    = Table "towns"      townId    :: Table Town
+tableAd      = Table "ads"        :: Table Ad
+tableAdWeek  = Table "ads_weeks"  :: Table AdWeek
+tableTown    = Table "towns"      :: Table Town
 
 -- Primary keys
 adId      = primKey tableAd
