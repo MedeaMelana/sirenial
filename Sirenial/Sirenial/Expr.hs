@@ -5,7 +5,7 @@
 module Sirenial.Expr (
     -- * SQL expressions
     Expr(..), TableAlias(..), ToExpr(..),
-    (#), (.==.), (.<.), (.&&.), (.||.), exprAnd, exprOr,
+    lit, (#), (.==.), (.<.), (.&&.), (.||.), exprAnd, exprOr,
     isPure, isTrue, isFalse, selectedFields
   ) where
 
@@ -51,6 +51,11 @@ class     ToExpr a        where expr :: a -> Expr a
 instance  ToExpr [Char]   where expr = ExLit
 instance  ToExpr Bool     where expr b = if b then ExAnd [] else ExOr []
 instance  ToExpr (Ref t)  where expr = ExLit
+
+-- | Lift a value into the 'Expr' functor. If possible, 'expr' should be used
+-- instead as it is able to do type-specific logic.
+lit :: Convertible a SqlValue => a -> Expr a
+lit = ExLit
 
 -- | Retrieve a field from a table.
 (#) :: Convertible SqlValue a => TableAlias t -> Field t a -> Expr a
