@@ -8,11 +8,12 @@ import Sirenial.Tables
 import Sirenial.Expr
 import Sirenial.Select
 import Sirenial.Modify
-import Sirenial.ToSql
+import Sirenial.Execute
 
 import Data.Maybe
 import Data.Time.Calendar
 import Control.Applicative
+import Data.Traversable
 
 import Database.HDBC
 import Database.HDBC.MySQL

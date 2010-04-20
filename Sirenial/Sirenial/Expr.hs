@@ -6,21 +6,17 @@ module Sirenial.Expr (
     -- * SQL expressions
     Expr(..), TableAlias(..), ToExpr(..),
     (#), (.==.), (.<.), (.&&.), (.||.), exprAnd, exprOr,
-    isPure, isTrue, isFalse, exprToQs, selectedFields
+    isPure, isTrue, isFalse, selectedFields
   ) where
 
 import Sirenial.Tables
-import Sirenial.QueryString
 
 import Control.Applicative
 import Control.Monad.State
 import Database.HDBC
-import Data.Either
 import Data.Monoid
 import Data.Convertible
 import Data.List
-import qualified Data.Map as M
-import Control.Arrow (first, second)
 
 
 -- | SQL expressions indexed by their type.
@@ -41,7 +37,12 @@ instance Applicative Expr where
   pure   = ExPure
   (<*>)  = ExApply
 
--- | SQL constructs such as FROM and JOIN introduce new table aliases.
+-- | In SELECT queries, constructs such as FROM and JOIN introduce new table
+-- aliases. The 'Select' monad takes care of supplying these aliases,
+-- containing 'Just's with unique numbers. In INSERT, DELETE and UPDATE
+-- queries, there is always exactly one table being modified. In those cases,
+-- a 'TableAlias' containing a 'Nothing' is used. In both cases, the aliases
+-- can be used as argument to @#@ to retrieve fields.
 data TableAlias t = TableAlias { getAlias :: Maybe Int }
 
 -- | Lift a value into the 'Expr' functor.
@@ -87,6 +88,9 @@ exprOr :: [Expr Bool] -> Expr Bool
 exprOr [p] = p
 exprOr ps = ExOr ps
 
+-- | If an expression does not depend on data from the database (e.g. contains
+-- no 'ExGet' constructors), it can be evaluated without connecting to the
+-- database. In that case, 'isPure' returns @'Just' x@.
 isPure :: Expr a -> Maybe a
 isPure expr =
   case expr of
@@ -122,60 +126,17 @@ isFalse expr =
 (<>) :: Monoid m => m -> m -> m
 (<>) = mappend
 
-selectedFields :: Expr a -> [(Maybe Int, String)]
+selectedFields :: Expr a -> [(Int, String)]
 selectedFields = nub . sort . go
   where
-    go :: Expr a -> [(Maybe Int, String)]
+    go :: Expr a -> [(Int, String)]
     go expr =
       case expr of
-        ExGet a f    -> [(getAlias a, fieldName f)]
+        ExGet (TableAlias (Just a)) f ->
+          [(a, fieldName f)]
         ExApply f x  -> go f <> go x
         ExEq x y     -> go x <> go y
         ExLT x y     -> go x <> go y
         ExAnd ps     -> concatMap go ps
         ExOr ps      -> concatMap go ps
         _            -> []
-
--- | Render an SQL expression as query string.
-exprToQs :: Expr a -> QueryString
-exprToQs expr = case expr of
-    ExPure _     -> error "Pure values cannot be converted to SQL."
-    ExApply _ _  -> error "Pure values cannot be converted to SQL."
-    ExGet a f    -> qss $ "t" <> maybe mempty (\a' -> show a' <> ".") (getAlias a) <> fieldName f
-    ExEq x y     -> parens $ exprToQs x <> qss " = " <> exprToQs y
-    ExLT x y     -> parens $ exprToQs x <> qss " < " <> exprToQs y
-    ExAnd ps     -> reduce " and " "1" (map exprToQs ps)
-    ExOr  ps     -> disjToQs ps
-    ExLit x      -> qsv (toSql x)
-
-reduce :: String -> String -> [QueryString] -> QueryString
-reduce sep zero exprs =
-  case exprs of
-    []      -> qss zero
-    [expr]  -> expr
-    _       -> parens $ mconcat $ intersperse (qss sep) exprs
-
-parens :: QueryString -> QueryString
-parens x = qss "(" <> x <> qss ")"
-
--- It'd be nice if we could perform this rewrite on Exprs directly, but we
--- don't have enough type information for that.
-disjToQs :: [Expr Bool] -> QueryString
-disjToQs = allToQs . first group . partitionEithers . map part
-  where
-    part :: Expr a -> Either ((Maybe Int, String), QueryString) QueryString
-    part expr =
-      case expr of
-        ExEq (ExGet alias field) y  -> Left ((getAlias alias, fieldName field), exprToQs y)
-        _                           -> Right (exprToQs expr)
-    group :: Ord k => [(k, v)] -> [(k, [v])]
-    group = M.toList . M.fromListWith (<>) . reverse . map (second (:[]))
-    allToQs :: ([((Maybe Int, String), [QueryString])], [QueryString]) -> QueryString
-    allToQs (gs, ss) = disjToQs' (map singleToQs gs <> ss)
-    singleToQs :: ((Maybe Int, String), [QueryString]) -> QueryString
-    singleToQs ((a, f), es) = qss (maybe mempty (\a' -> "t" <> show a' <> ".") a <> f) <>
-      case nub es of
-        [e]    -> qss " = " <> e
-        nubEs  -> qss " in (" <> mconcat (intersperse (qss ",") nubEs) <> qss ")"
-    disjToQs' :: [QueryString] -> QueryString
-    disjToQs' = reduce " or " "0"
